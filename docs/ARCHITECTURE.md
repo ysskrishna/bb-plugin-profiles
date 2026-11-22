@@ -6,6 +6,7 @@ Profiles extends Model Filter at c651107. LICENSE retains the upstream MIT notic
 | --------------------- | --------------------------------------------------------------------------------------------------------------------------- |
 | profiles.ts           | Types, bounded validation, profile operations, project resolution, v1 conversion and the pure picker projection             |
 | profiles-store.ts     | SQLite singleton row (`model_filter_preferences`), version 2 document, immediate-transaction mutations                      |
+| custom-models.ts      | Safe read, atomic rewrite and reload of the `customModels` key in BB's `config.json`; serialized writes                     |
 | contract.ts           | Strict RPC inputs and the `profiles-changed` realtime channel                                                               |
 | server.ts             | RPC handlers, refusals for invalid changes, `bb profiles` CLI                                                               |
 | query-bridge.ts       | Sole private React/TanStack boundary; five/six-field query keys, composed observer selectors, unchanged raw cache, disposal |
