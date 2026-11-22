@@ -1,7 +1,17 @@
-import { useMemo, useState } from "react";
+import { useMemo, useState, type FormEvent } from "react";
 import { getProviderRule, type Profile, type ProviderRule } from "./profiles";
-import type { CatalogState, ProviderOption } from "./settings-data";
-import { SettingsSection, SwitchRow, type SaveStatus } from "./settings-ui";
+import type {
+  CatalogState,
+  CustomModelOption,
+  ProviderOption,
+} from "./settings-data";
+import {
+  SettingRow,
+  SettingsSection,
+  SwitchRow,
+  type SaveStatus,
+} from "./settings-ui";
+import { Button } from "./components/ui/button";
 import { cn } from "./lib/utils";
 
 const DEFAULT_RULE: ProviderRule = {
@@ -16,6 +26,10 @@ export function ProvidersSection({
   catalogs,
   status,
   error,
+  customModels,
+  customWarning,
+  onAddCustomModel,
+  onRemoveCustomModel,
   onChange,
 }: {
   profile: Profile;
@@ -23,6 +37,14 @@ export function ProvidersSection({
   catalogs: Record<string, CatalogState>;
   status: SaveStatus | undefined;
   error: string | null;
+  customModels: CustomModelOption[];
+  customWarning: string | null;
+  onAddCustomModel: (
+    providerId: string,
+    model: string,
+    displayName: string | undefined,
+  ) => Promise<boolean>;
+  onRemoveCustomModel: (providerId: string, model: string) => void;
   onChange: (
     providerId: string,
     update: (rule: ProviderRule) => ProviderRule,
@@ -156,6 +178,14 @@ export function ProvidersSection({
               ) : null}
             </>
           ) : null}
+          <CustomModelsRow
+            key={current.id}
+            providerName={current.displayName}
+            models={customModels.filter((m) => m.providerId === current.id)}
+            warning={customWarning}
+            onAdd={(model, name) => onAddCustomModel(current.id, model, name)}
+            onRemove={(model) => onRemoveCustomModel(current.id, model)}
+          />
         </>
       )}
     </SettingsSection>
@@ -276,5 +306,104 @@ function ModelChecklist({
         </div>
       ) : null}
     </div>
+  );
+}
+
+const inputClass =
+  "h-8 min-w-0 rounded-md border border-border bg-background px-2.5 text-sm text-foreground outline-none placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-1 focus-visible:ring-ring";
+
+function CustomModelsRow({
+  providerName,
+  models,
+  warning,
+  onAdd,
+  onRemove,
+}: {
+  providerName: string;
+  models: CustomModelOption[];
+  warning: string | null;
+  onAdd: (model: string, displayName: string | undefined) => Promise<boolean>;
+  onRemove: (model: string) => void;
+}) {
+  const [model, setModel] = useState("");
+  const [name, setName] = useState("");
+  const [busy, setBusy] = useState(false);
+  const submit = async (event: FormEvent) => {
+    event.preventDefault();
+    if (!model.trim() || busy) return;
+    setBusy(true);
+    const ok = await onAdd(model.trim(), name.trim() || undefined);
+    setBusy(false);
+    if (ok) {
+      setModel("");
+      setName("");
+    }
+  };
+  return (
+    <SettingRow
+      title="Custom models"
+      description="Added to BB for every profile. The provider must accept the ID."
+    >
+      {models.length ? (
+        <ul aria-label={`${providerName} custom models`} className="mb-2">
+          {models.map((item) => (
+            <li
+              key={item.model}
+              className="flex items-center justify-between gap-2 py-0.5 text-sm"
+            >
+              <span className="flex min-w-0 items-baseline gap-2">
+                <span className="truncate text-foreground">
+                  {item.displayName ?? item.model}
+                </span>
+                {item.displayName ? (
+                  <code className="truncate font-mono text-xs text-muted-foreground">
+                    {item.model}
+                  </code>
+                ) : null}
+              </span>
+              <Button
+                type="button"
+                size="sm"
+                variant="ghost"
+                aria-label={`Remove custom model ${item.model}`}
+                onClick={() => onRemove(item.model)}
+              >
+                Remove
+              </Button>
+            </li>
+          ))}
+        </ul>
+      ) : null}
+      <form onSubmit={submit} className="flex flex-wrap items-center gap-2">
+        <input
+          aria-label="Model ID"
+          placeholder="Model ID"
+          value={model}
+          onChange={(event) => setModel(event.target.value)}
+          className={cn(inputClass, "flex-1 basis-40 font-mono")}
+        />
+        <input
+          aria-label="Name"
+          placeholder="Name (optional)"
+          maxLength={80}
+          value={name}
+          onChange={(event) => setName(event.target.value)}
+          className={cn(inputClass, "flex-1 basis-40")}
+        />
+        <Button
+          type="submit"
+          size="sm"
+          variant="outline"
+          disabled={busy || !model.trim()}
+        >
+          Add model
+        </Button>
+      </form>
+      {warning ? (
+        <p role="status" className="mt-2 text-xs text-muted-foreground">
+          {warning}
+        </p>
+      ) : null}
+    </SettingRow>
   );
 }

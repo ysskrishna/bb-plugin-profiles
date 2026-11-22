@@ -14,6 +14,11 @@ export interface ModelOption {
   displayName: string;
   efforts: string[];
 }
+export interface CustomModelOption {
+  providerId: string;
+  model: string;
+  displayName?: string;
+}
 export type CatalogState =
   | { status: "loading" }
   | { status: "error"; message: string }
@@ -81,6 +86,8 @@ export function useProjects(): ProjectOption[] {
 /** Raw catalogs, loaded once per provider (not through the picker projection). */
 export function useCatalogs(
   providerIds: readonly string[],
+  /** Bump to reload every catalog, for example after custom models change. */
+  version = 0,
 ): Record<string, CatalogState> {
   const sdk = useSdk();
   const [catalogs, setCatalogs] = useState<Record<string, CatalogState>>({});
@@ -126,6 +133,6 @@ export function useCatalogs(
     return () => {
       live = false;
     };
-  }, [sdk, key]);
+  }, [sdk, key, version]);
   return catalogs;
 }
