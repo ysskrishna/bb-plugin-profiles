@@ -1,4 +1,9 @@
-import { getProviderRule, resolveProfile, type Snapshot } from "./profiles";
+import {
+  getProviderRule,
+  resolveProfile,
+  type Profile,
+  type Snapshot,
+} from "./profiles";
 
 export interface Selection {
   projectId?: string;
@@ -21,6 +26,15 @@ export interface Plan {
   apply?: { providerId: string; model?: string; reasoningLevel?: string };
 }
 
+function allows(profile: Profile, selection: Selection): boolean {
+  if (!selection.providerId) return true;
+  const rule = getProviderRule(profile, selection.providerId);
+  if (rule?.enabled === false) return false;
+  return (
+    !rule?.limit || !selection.model || rule.modelIds.includes(selection.model)
+  );
+}
+
 /** Decide what a new-thread composer should select for its project's profile.
  * Rules: apply on first sight of an empty draft and whenever the project
  * changes, unless the user changed provider or model since our last apply.
@@ -37,8 +51,16 @@ export function planDefault(
   const state: DraftState = previous ?? { userPicked: false };
   if (previous === undefined && !options.draftEmpty)
     return { state: { project: projectId, userPicked: true } };
-  if (state.userPicked) return { state };
   const projectChanged = state.project !== projectId;
+  // A pick survives a project switch only while the new project's profile
+  // still allows it; otherwise the profile decides again.
+  if (state.userPicked) {
+    if (
+      !projectChanged ||
+      allows(resolveProfile(snapshot, projectId), selection)
+    )
+      return { state: { ...state, project: projectId } };
+  }
   if (
     !projectChanged &&
     state.applied &&
@@ -74,6 +96,11 @@ export function planDefault(
     );
     if (fallback) apply = { providerId: fallback };
     else if (options.providers === null) return { state };
+  } else if (selection.providerId && !allows(profile, selection)) {
+    // The current model is outside the provider's limit: take the first
+    // model the profile keeps for it.
+    const first = getProviderRule(profile, selection.providerId)?.modelIds[0];
+    if (first) apply = { providerId: selection.providerId, model: first };
   }
   if (!apply && !selection.providerId) return { state };
   return {

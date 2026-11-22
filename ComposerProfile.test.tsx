@@ -116,7 +116,7 @@ describe("ComposerProfile", () => {
       </>,
     );
     composer(
-      { projectId: "p1", providerId: "claude", model: "sonnet" },
+      { projectId: "p1", providerId: "codex", model: "terra" },
       `draft-${n}`,
     );
     view.rerender(
@@ -126,7 +126,7 @@ describe("ComposerProfile", () => {
       </>,
     );
     composer(
-      { projectId: "p2", providerId: "claude", model: "sonnet" },
+      { projectId: "p2", providerId: "codex", model: "terra" },
       `draft-${n}`,
     );
     view.rerender(

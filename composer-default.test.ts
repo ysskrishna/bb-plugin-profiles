@@ -134,3 +134,69 @@ describe("composer auto-default", () => {
     expect(plan.state.applied).toEqual({ providerId: "codex", model: "x" });
   });
 });
+
+describe("a manual pick and the next project's profile", () => {
+  const claudeOnly = profile(
+    "claude-only",
+    { codex: off, claude: limit("opus", "sonnet") },
+    {
+      projectIds: ["airbills"],
+      defaultModel: { providerId: "claude", model: "opus" },
+    },
+  );
+  const noDefault = profile(
+    "no-default",
+    { claude: limit("sonnet") },
+    { projectIds: ["limited"] },
+  );
+  const snap = snapshotOf(
+    {},
+    {
+      defaultModel: { providerId: "codex", model: "gpt" },
+      others: [claudeOnly, noDefault],
+    },
+  );
+  const picked = (projectId: string, providerId: string, model: string) => {
+    const first = planDefault(undefined, sel(projectId), snap, options);
+    return planDefault(
+      first.state,
+      sel(projectId, providerId, model),
+      snap,
+      options,
+    ).state;
+  };
+
+  it("replaces a pick whose provider is off in the new project", () => {
+    const state = picked("other", "codex", "terra");
+    expect(state.userPicked).toBe(true);
+    const plan = planDefault(
+      state,
+      sel("airbills", "codex", "terra"),
+      snap,
+      options,
+    );
+    expect(plan.apply).toEqual({ providerId: "claude", model: "opus" });
+    expect(plan.state.userPicked).toBe(false);
+  });
+  it("replaces a pick outside the new project's model limit", () => {
+    const state = picked("other", "claude", "haiku");
+    const plan = planDefault(
+      state,
+      sel("limited", "claude", "haiku"),
+      snap,
+      options,
+    );
+    expect(plan.apply).toEqual({ providerId: "claude", model: "sonnet" });
+  });
+  it("keeps a pick the new project's profile allows", () => {
+    const state = picked("other", "claude", "sonnet");
+    const plan = planDefault(
+      state,
+      sel("airbills", "claude", "sonnet"),
+      snap,
+      options,
+    );
+    expect(plan.apply).toBeUndefined();
+    expect(plan.state.userPicked).toBe(true);
+  });
+});

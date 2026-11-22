@@ -79,6 +79,14 @@ export function ProfilesSection({
     // actions identity changes every render; the inputs are listed.
   }, [renameName, selected.id, selected.name]);
   useEffect(() => setEditor(null), [selected.id]);
+  // Done and Enter save right away instead of waiting for the pause, which
+  // closing the editor would otherwise cancel.
+  const finishRename = (name: string) => {
+    const clean = name.trim();
+    setEditor(null);
+    if (clean && clean !== selected.name)
+      void actions.rename(selected.id, clean);
+  };
 
   return (
     <SettingsSection title="Profiles" status={status}>
@@ -161,13 +169,19 @@ export function ProfilesSection({
                 onChange={(event) =>
                   setEditor({ kind: "rename", name: event.target.value })
                 }
+                onKeyDown={(event) => {
+                  if (event.key === "Enter") {
+                    event.preventDefault();
+                    finishRename(editor.name);
+                  }
+                }}
                 className="h-8 w-56 rounded-md border border-border bg-background px-2.5 text-sm text-foreground outline-none focus-visible:border-ring focus-visible:ring-1 focus-visible:ring-ring"
               />
               <Button
                 type="button"
                 size="sm"
                 variant="ghost"
-                onClick={() => setEditor(null)}
+                onClick={() => finishRename(editor.name)}
               >
                 Done
               </Button>

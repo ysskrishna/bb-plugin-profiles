@@ -307,6 +307,22 @@ describe("settings page", () => {
     expect(called("deleteProfile")[0][1]).toEqual({ id: "p_Work" });
   });
 
+  it("saves a rename right away when Done is clicked before the pause", async () => {
+    await ready();
+    await createWork();
+    fireEvent.click(screen.getByRole("button", { name: "Work actions" }));
+    fireEvent.click(screen.getByRole("menuitem", { name: "Rename" }));
+    fireEvent.change(screen.getByLabelText("Profile name"), {
+      target: { value: "Client" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Done" }));
+    await waitFor(() => expect(called("renameProfile")).toHaveLength(1));
+    expect(called("renameProfile")[0][1]).toEqual({
+      id: "p_Work",
+      name: "Client",
+    });
+  });
+
   it("offers only Duplicate for Default, and shows a server refusal inline", async () => {
     await ready();
     fireEvent.click(screen.getByRole("button", { name: "Default actions" }));
