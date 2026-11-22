@@ -10,27 +10,34 @@ import {
   vi,
   type Mock,
 } from "vitest";
-import type { Snapshot } from "./preferences";
+import type { Snapshot } from "./profiles";
 import {
-  receivePreferences,
+  receiveSnapshot,
   reportRuntime,
-  usePreferencesView,
-} from "./preferences-client";
+  setComposerProject,
+  useProfilesView,
+} from "./profiles-client";
+import type { BridgeState } from "./query-bridge";
+import { limit, snapshotOf } from "./test-utils";
 
 type Bridge = {
-  update: Mock<(snapshot: Snapshot) => void>;
+  update: Mock<(state: BridgeState) => void>;
   dispose: Mock<() => void>;
 };
 type Registration = { component: ComponentType };
 const state = vi.hoisted(() => ({
   connection: "connecting",
-  enabled: true,
   overlay: null as ComponentType | null,
-  snapshot: { revision: 0, providers: {} } as Snapshot,
-  rpc: { call: vi.fn<(...args: unknown[]) => Promise<Snapshot>>() },
+  snapshot: null as unknown,
+  rpc: { call: vi.fn<(...args: unknown[]) => Promise<unknown>>() },
+  sdk: {
+    environments: {
+      list: vi.fn<(args: unknown) => Promise<unknown[]>>(),
+    },
+  },
   listeners: new Map<string, Set<() => void>>(),
   client: {},
-  bridges: [] as Bridge[],
+  bridges: [] as unknown[],
   attach: vi.fn(),
   find: vi.fn(),
 }));
@@ -57,7 +64,7 @@ vi.mock("@get-bb/plugin-sdk/app", () => ({
     return {};
   },
   useRpc: () => state.rpc,
-  useSettings: () => ({ values: { enabled: state.enabled } }),
+  useSdk: () => state.sdk,
   useRealtimeConnectionState: () => state.connection,
   useRealtime: (channel: string, handler: () => void) => {
     React.useEffect(() => {
@@ -74,12 +81,13 @@ vi.mock("./query-bridge", () => ({
   findQueryClient: () => state.find(),
   attachQueryBridge: (...args: unknown[]) => state.attach(...args),
 }));
-vi.mock("./ModelFilterSettings", () => ({ ModelFilterSettings: () => null }));
+vi.mock("./SettingsPage", () => ({ SettingsPage: () => null }));
+vi.mock("./ComposerProfile", () => ({ ComposerProfile: () => null }));
 import "./app";
 
 function Surface() {
   const Overlay = state.overlay!;
-  const view = usePreferencesView();
+  const view = useProfilesView();
   return (
     <>
       <Overlay />
@@ -89,10 +97,7 @@ function Surface() {
   );
 }
 function snapshot(revision: number, model = "selected-model"): Snapshot {
-  return {
-    revision,
-    providers: { custom: { mode: "selected", modelIds: [model] } },
-  };
+  return snapshotOf({ custom: limit(model) }, { revision });
 }
 function deferred<T>() {
   let resolve!: (value: T) => void;
@@ -103,30 +108,32 @@ function deferred<T>() {
 }
 const readSnapshot = () =>
   JSON.parse(screen.getByTestId("snapshot").textContent!);
+const bridges = () => state.bridges as Bridge[];
 let baseRevision = 0;
 beforeEach(() => {
   baseRevision += 100;
   state.connection = "connecting";
-  state.enabled = true;
   state.find.mockReset().mockReturnValue(state.client);
   state.snapshot = snapshot(baseRevision + 1);
   state.listeners.clear();
   state.bridges.length = 0;
   state.rpc.call.mockReset().mockImplementation(async () => state.snapshot);
+  state.sdk.environments.list.mockReset().mockResolvedValue([]);
   state.attach.mockReset().mockImplementation(() => {
     const bridge = {
-      update: vi.fn<(value: Snapshot) => void>(),
+      update: vi.fn<(value: BridgeState) => void>(),
       dispose: vi.fn<() => void>(),
     };
     state.bridges.push(bridge);
     return bridge;
   });
-  receivePreferences({ revision: baseRevision, providers: {} });
+  receiveSnapshot(snapshotOf({}, { revision: baseRevision }));
+  setComposerProject(null);
   reportRuntime({ state: "starting", message: "Connecting" });
 });
 afterEach(cleanup);
 
-describe("frontend preference synchronization", () => {
+describe("frontend profile synchronization", () => {
   it("recovers a missed server update on reconnect without a realtime signal", async () => {
     const surface = render(<Surface />);
     await waitFor(() => expect(readSnapshot()).toEqual(state.snapshot));
@@ -138,7 +145,9 @@ describe("frontend preference synchronization", () => {
     state.connection = "connected";
     surface.rerender(<Surface />);
     await waitFor(() => expect(readSnapshot()).toEqual(state.snapshot));
-    expect(state.bridges[0].update).toHaveBeenLastCalledWith(state.snapshot);
+    expect(bridges()[0].update).toHaveBeenLastCalledWith(
+      expect.objectContaining({ snapshot: state.snapshot }),
+    );
   });
 
   it("keeps the newest snapshot when a slower bootstrap response arrives after a realtime refresh", async () => {
@@ -150,7 +159,7 @@ describe("frontend preference synchronization", () => {
       .mockReturnValueOnce(realtime.promise);
     render(<Surface />);
     act(() => {
-      for (const listener of state.listeners.get("preferences-changed") ?? [])
+      for (const listener of state.listeners.get("profiles-changed") ?? [])
         listener();
     });
     const newest = snapshot(baseRevision + 2, "latest");
@@ -163,31 +172,54 @@ describe("frontend preference synchronization", () => {
       bootstrap.resolve(stale);
     });
     expect(readSnapshot()).toEqual(newest);
-    expect(state.bridges[0].update).not.toHaveBeenCalledWith(stale);
+    expect(bridges()[0].update).not.toHaveBeenCalledWith(
+      expect.objectContaining({ snapshot: stale }),
+    );
   });
 
-  it("restores native choices on disable, reattaches with the latest preferences, and disposes on unmount", async () => {
+  it("attaches once, feeds composer project and environment map changes, and disposes on unmount", async () => {
+    state.sdk.environments.list.mockResolvedValue([
+      { id: "env1", projectId: "p1" },
+      { id: "env2", projectId: null },
+    ]);
     const surface = render(<Surface />);
-    await waitFor(() => expect(readSnapshot()).toEqual(state.snapshot));
-    const first = state.bridges[0];
-    state.enabled = false;
-    surface.rerender(<Surface />);
-    expect(first.dispose).toHaveBeenCalledTimes(1);
-    expect(screen.getByTestId("runtime").textContent).toBe("disabled");
-    const latest = snapshot(baseRevision + 2, "saved-while-disabled");
-    act(() => {
-      receivePreferences(latest);
-    });
-    expect(state.bridges).toHaveLength(1);
-    state.enabled = true;
-    surface.rerender(<Surface />);
-    expect(state.attach).toHaveBeenLastCalledWith(state.client, latest);
+    await waitFor(() =>
+      expect(bridges()[0].update).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          environmentProjects: { env1: "p1", env2: null },
+        }),
+      ),
+    );
     expect(screen.getByTestId("runtime").textContent).toBe("active");
-    const second = state.bridges[1];
+    act(() => setComposerProject("p9"));
+    expect(bridges()[0].update).toHaveBeenLastCalledWith(
+      expect.objectContaining({ composerProjectId: "p9" }),
+    );
+    expect(state.attach).toHaveBeenCalledTimes(1);
     surface.unmount();
-    expect(second.dispose).toHaveBeenCalledTimes(1);
-    expect(state.listeners.get("preferences-changed")?.size).toBe(0);
+    expect(bridges()[0].dispose).toHaveBeenCalledTimes(1);
+    expect(state.listeners.get("profiles-changed")?.size).toBe(0);
   });
+
+  it("looks an unknown environment up once", async () => {
+    render(<Surface />);
+    await waitFor(() => expect(state.attach).toHaveBeenCalled());
+    await waitFor(() => expect(state.sdk.environments.list).toHaveBeenCalled());
+    const onUnknown = state.attach.mock.calls[0][2] as (id: string) => void;
+    const before = state.sdk.environments.list.mock.calls.length;
+    await act(async () => {
+      onUnknown("env-new");
+      onUnknown("env-new");
+    });
+    await waitFor(() =>
+      expect(state.sdk.environments.list.mock.calls.length).toBe(before + 1),
+    );
+    await act(async () => {
+      onUnknown("env-new");
+    });
+    expect(state.sdk.environments.list.mock.calls.length).toBe(before + 1);
+  });
+
   it("keeps discovery failures inside the inactive status boundary", async () => {
     state.find.mockImplementation(() => {
       throw new Error("Unsupported query client");

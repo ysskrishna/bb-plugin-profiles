@@ -2,11 +2,15 @@
 
 ## Unreleased
 
-- Prevent the preferred-model action from submitting a surrounding composer form.
-- Target BB 0.50.1 and fix filtering for selected-model discovery queries.
-- Add provider favorites, ordering and explicit preferred model/reasoning selections.
-- Document menu-only filtering, native custom-model setup and the private compatibility adapter.
-- Retain the upstream SQLite revision and raw-catalog validation foundation.
+- Rename the plugin to Profiles (package `bb-plugin-profiles`, CLI `bb profiles`).
+- Add per-project profiles: Default plus named profiles copied from any profile, each with provider on/off, optional limits to selected models and a default model.
+- Show unselected models under More models, or remove them, with one global choice.
+- Select a project's default model and reasoning level in new-thread composers without overwriting a model the user picked; add a settings button to the composer.
+- Rebuild settings as autosaving cards in the Idle Compact style.
+- Convert existing Model Manager rules into Default on first change. Favorites, ordering, the preferred-model button and the favorite/order/prefer CLI commands are removed.
+- Target BB 0.50.1 and keep filtering for selected-model discovery queries.
+- Document picker-only filtering, native custom-model setup and the private compatibility adapter.
+- Retain the upstream SQLite transaction foundation.
 
 ## Upstream Model Filter history
 

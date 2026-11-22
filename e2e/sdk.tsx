@@ -6,7 +6,17 @@ import React, {
   useSyncExternalStore,
 } from "react";
 import { QueryClient, QueryObserver } from "@tanstack/query-core";
-import type { Snapshot } from "../preferences";
+import {
+  INITIAL_SNAPSHOT,
+  createProfile,
+  deleteProfile,
+  renameProfile,
+  setDefaultModel,
+  setHiddenModels,
+  setProfileProjects,
+  setProvider,
+  type Snapshot,
+} from "../profiles";
 
 export const queryClient = new QueryClient();
 export const QueryContext = createContext(queryClient);
@@ -40,29 +50,47 @@ export function catalog(providerId: string) {
     modelLoadError: null,
   };
 }
-let snapshot: Snapshot = { revision: 0, providers: {} };
+let snapshot: Snapshot = INITIAL_SNAPSHOT;
 const listeners = new Map<string, Set<() => void>>();
+function commit(next: Snapshot) {
+  snapshot = { ...next, revision: snapshot.revision + 1 };
+  for (const fn of listeners.get("profiles-changed") ?? []) fn();
+  return snapshot;
+}
 const rpc = {
-  async call(
-    method: string,
-    input: {
-      expectedRevision: number;
-      providerId: string;
-      rule: Snapshot["providers"][string];
-    } | null,
-  ) {
-    if (method === "getPreferences") return snapshot;
-    if (!input || input.expectedRevision !== snapshot.revision)
-      throw new Error("Fixture revision conflict");
-    const next = { ...snapshot.providers };
-    if (method === "saveProvider") next[input.providerId] = input.rule;
-    else if (method === "resetPreferences") {
-      if (input.providerId) delete next[input.providerId];
-      else for (const id of Object.keys(next)) delete next[id];
+  async call(method: string, input: any) {
+    switch (method) {
+      case "getSnapshot":
+        return snapshot;
+      case "setHiddenModels":
+        return commit(setHiddenModels(snapshot, input.mode));
+      case "createProfile": {
+        const made = createProfile(
+          snapshot,
+          input.name,
+          input.copyFromId,
+          `p_${snapshot.revision}`,
+        );
+        return { snapshot: commit(made.snapshot), id: made.id };
+      }
+      case "renameProfile":
+        return commit(renameProfile(snapshot, input.id, input.name));
+      case "deleteProfile":
+        return commit(deleteProfile(snapshot, input.id));
+      case "setProfileProjects":
+        return commit(setProfileProjects(snapshot, input.id, input.projectIds));
+      case "setProvider":
+        return commit(
+          setProvider(snapshot, input.profileId, input.providerId, input.rule),
+        );
+      case "setDefaultModel":
+        return commit(
+          setDefaultModel(snapshot, input.profileId, input.defaultModel),
+        );
+      case "reset":
+        return commit(INITIAL_SNAPSHOT);
     }
-    snapshot = { revision: snapshot.revision + 1, providers: next };
-    for (const fn of listeners.get("preferences-changed") ?? []) fn();
-    return snapshot;
+    throw new Error(`Unknown fixture method ${method}`);
   },
 };
 const sdk = {
@@ -70,6 +98,12 @@ const sdk = {
     list: async () => [{ id: "fixture-host", name: "Fixture machine" }],
   },
   environments: { list: async () => [] },
+  projects: {
+    list: async () => [
+      { id: "p-aribills", name: "aribills", kind: "standard" },
+      { id: "p-snabbit", name: "snabbit", kind: "standard" },
+    ],
+  },
   providers: { list: async () => providers },
   system: {
     executionOptions: async ({ providerId }: { providerId: string }) =>
@@ -77,7 +111,10 @@ const sdk = {
   },
 };
 export const ComposerContext = createContext({
+  key: "fixture-draft",
+  isEmpty: true,
   selection: {
+    projectId: "p-aribills",
     providerId: "codex",
     model: "gpt-6.2-sol",
     reasoningLevel: "high",
@@ -96,8 +133,11 @@ export function useRpc() {
 export function useSdk() {
   return sdk;
 }
-export function useSettings() {
-  return { values: { enabled: true } };
+export function experimental_Icon({
+  name,
+  ...props
+}: { name: string } & React.SVGProps<SVGSVGElement>) {
+  return <svg data-icon={name} viewBox="0 0 16 16" {...props} />;
 }
 export function useRealtimeConnectionState() {
   return "connected";

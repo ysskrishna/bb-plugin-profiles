@@ -1,4 +1,11 @@
-import { getProviderRule, projectCatalog, type Snapshot } from "./preferences";
+import { projectCatalog, resolveProfile, type Snapshot } from "./profiles";
+
+/** Everything the projection depends on besides the response itself. */
+export interface BridgeState {
+  snapshot: Snapshot;
+  environmentProjects: Readonly<Record<string, string | null>>;
+  composerProjectId: string | null;
+}
 
 export interface QueryOptions {
   queryKey?: readonly unknown[];
@@ -68,10 +75,13 @@ function observerFromEvent(event: unknown): Observer | null {
 
 export function attachQueryBridge(
   client: QueryClientAdapter,
-  initial: Snapshot,
+  initial: BridgeState,
+  /** Called (never synchronously re-entering the cache) with an environment id
+   * the map does not know, so the owner can refresh it. */
+  onUnknownEnvironment: (environmentId: string) => void = () => {},
 ) {
   const original = client.defaultQueryOptions;
-  let snapshot = initial;
+  let state = initial;
   let active = true;
   const selectorOriginals = new WeakMap<Function, QueryOptions["select"]>();
   const placeholderOriginals = new WeakMap<Function, unknown>();
@@ -109,13 +119,21 @@ export function attachQueryBridge(
       select = (data) => {
         let projected: unknown = data;
         if (active && isCatalog(data)) {
-          const providerId =
-            requested && data.providers.some((p) => p.id === requested)
-              ? requested
-              : data.providers[0]?.id;
+          const environmentId = typeof key[1] === "string" ? key[1] : null;
+          let projectId: string | null = state.composerProjectId;
+          if (environmentId) {
+            if (Object.hasOwn(state.environmentProjects, environmentId))
+              projectId = state.environmentProjects[environmentId];
+            else {
+              projectId = null;
+              queueMicrotask(() => onUnknownEnvironment(environmentId));
+            }
+          }
           projected = projectCatalog(
             data,
-            providerId ? getProviderRule(snapshot, providerId) : undefined,
+            resolveProfile(state.snapshot, projectId),
+            state.snapshot.hiddenModels,
+            requested,
           );
         }
         return native ? native(projected) : projected;
@@ -175,9 +193,9 @@ export function attachQueryBridge(
     throw error;
   }
   return {
-    update(next: Snapshot) {
+    update(next: BridgeState) {
       if (!active) return;
-      snapshot = next;
+      state = next;
       selectors = new Map();
       placeholders = new Map();
       refresh();

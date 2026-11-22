@@ -4,64 +4,107 @@ import {
   useRealtime,
   useRealtimeConnectionState,
   useRpc,
-  useSettings,
+  useSdk,
 } from "@get-bb/plugin-sdk/app";
-import { rpcContract, PREFERENCES_CHANGED } from "./contract";
-import { INITIAL_SNAPSHOT } from "./preferences";
+import { rpcContract, PROFILES_CHANGED } from "./contract";
 import { attachQueryBridge, findQueryClient } from "./query-bridge";
 import {
-  receivePreferences,
+  currentSnapshot,
+  receiveEnvironmentProjects,
+  receiveSnapshot,
   reportRuntime,
   reportSyncError,
-  usePreferencesView,
-} from "./preferences-client";
-import { ModelFilterSettings } from "./ModelFilterSettings";
-import { PreferredModelAction } from "./PreferredModelAction";
-import "./app.css";
+  useProfilesView,
+} from "./profiles-client";
+import { ComposerProfile } from "./ComposerProfile";
+import { SettingsPage } from "./SettingsPage";
+
+const ENVIRONMENT_PAGE = 200;
+const ENVIRONMENT_CAP = 5000;
 
 function RuntimeBootstrap() {
   const anchor = useRef<HTMLDivElement>(null);
   const bridge = useRef<ReturnType<typeof attachQueryBridge> | null>(null);
   const rpc = useRpc<typeof rpcContract>();
-  const { values } = useSettings();
-  const enabled = values?.enabled !== false;
+  const sdk = useSdk();
   const connection = useRealtimeConnectionState();
-  const view = usePreferencesView();
+  const view = useProfilesView();
   const refresh = useCallback(() => {
-    rpc.call("getPreferences", null).then(receivePreferences, reportSyncError);
+    rpc.call("getSnapshot", null).then(receiveSnapshot, reportSyncError);
   }, [rpc]);
-  useRealtime(PREFERENCES_CHANGED, refresh);
+  useRealtime(PROFILES_CHANGED, refresh);
   useEffect(() => {
     if (connection === "connected") refresh();
   }, [connection, refresh]);
   useEffect(() => {
     refresh();
   }, [refresh]);
+
+  // environment id -> project id. Ids that the list did not contain are asked
+  // for once; the map is rebuilt from the full list each time.
+  const asked = useRef(new Set<string>());
+  const loading = useRef(false);
+  const loadEnvironments = useCallback(
+    async (unknownId?: string) => {
+      if (unknownId) {
+        if (asked.current.has(unknownId)) return;
+        asked.current.add(unknownId);
+      }
+      if (loading.current) return;
+      loading.current = true;
+      try {
+        const map: Record<string, string | null> = {};
+        for (
+          let offset = 0;
+          offset < ENVIRONMENT_CAP;
+          offset += ENVIRONMENT_PAGE
+        ) {
+          const rows = await sdk.environments.list({
+            limit: ENVIRONMENT_PAGE,
+            offset,
+          });
+          for (const row of rows) map[row.id] = row.projectId ?? null;
+          if (rows.length < ENVIRONMENT_PAGE) break;
+        }
+        receiveEnvironmentProjects(map);
+      } catch {
+        // Unknown environments keep using the Default profile.
+      } finally {
+        loading.current = false;
+      }
+    },
+    [sdk],
+  );
+  useEffect(() => {
+    void loadEnvironments();
+  }, [loadEnvironments]);
+
+  const loadRef = useRef(loadEnvironments);
+  loadRef.current = loadEnvironments;
   useLayoutEffect(() => {
-    if (!enabled) {
-      reportRuntime({
-        state: "disabled",
-        message: "Filtering is off. Native model lists are restored.",
-      });
-      return;
-    }
     try {
       const client = anchor.current ? findQueryClient(anchor.current) : null;
       if (!client) {
         reportRuntime({
           state: "unsupported",
           message:
-            "This BB client is not compatible with Model Manager. Native model lists are unchanged.",
+            "This BB client is not compatible with Profiles. Native model lists are unchanged.",
         });
         return;
       }
+      const state = {
+        snapshot: currentSnapshot(),
+        environmentProjects: view.environmentProjects,
+        composerProjectId: view.composerProjectId,
+      };
       bridge.current = attachQueryBridge(
         client,
-        view.snapshot ?? INITIAL_SNAPSHOT,
+        state,
+        (id) => void loadRef.current(id),
       );
       reportRuntime({
         state: "active",
-        message: "Model preferences are connected in this BB window.",
+        message: "Profiles are connected in this BB window.",
       });
     } catch (error) {
       reportRuntime({
@@ -73,26 +116,28 @@ function RuntimeBootstrap() {
       bridge.current?.dispose();
       bridge.current = null;
     };
-  }, [enabled]);
+    // Attach once; later changes go through update() below.
+  }, []);
   useLayoutEffect(() => {
-    if (view.snapshot) bridge.current?.update(view.snapshot);
-  }, [view.snapshot]);
-  return <div ref={anchor} hidden data-model-filter-runtime="true" />;
+    if (view.snapshot)
+      bridge.current?.update({
+        snapshot: view.snapshot,
+        environmentProjects: view.environmentProjects,
+        composerProjectId: view.composerProjectId,
+      });
+  }, [view.snapshot, view.environmentProjects, view.composerProjectId]);
+  return <div ref={anchor} hidden data-profiles-runtime="true" />;
 }
 
 export default definePluginApp((app) => {
   app.composer.customize({
-    id: "preferred-model",
+    id: "profiles",
     scopes: ["new-thread"],
-    actions: [{ id: "apply-preferred", component: PreferredModelAction }],
+    actions: [{ id: "profile", component: ComposerProfile }],
   });
   app.slots.experimental_appOverlay({
     id: "runtime",
     component: RuntimeBootstrap,
   });
-  app.slots.settingsSection({
-    id: "models",
-    title: "Visible models",
-    component: ModelFilterSettings,
-  });
+  app.slots.settingsSection({ id: "settings", component: SettingsPage });
 });

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { QueryClient, QueryObserver } from "@tanstack/query-core";
 import { attachQueryBridge, type QueryClientAdapter } from "./query-bridge";
+import { bridgeState, limit, snapshotOf } from "./test-utils";
 const key = ["systemExecutionOptions", null, "host", "custom", null];
 const raw = {
   providers: [{ id: "custom" }],
@@ -16,10 +17,12 @@ describe("installed TanStack observer behavior", () => {
     const selectedKey = [...key, "b"];
     const client = new QueryClient();
     client.setQueryData(selectedKey, raw);
-    const bridge = attachQueryBridge(client as unknown as QueryClientAdapter, {
-      revision: 1,
-      providers: { custom: { mode: "selected", modelIds: ["b"] } },
-    });
+    const bridge = attachQueryBridge(
+      client as unknown as QueryClientAdapter,
+      bridgeState(
+        snapshotOf({ custom: limit("b") }, { hiddenModels: "remove" }),
+      ),
+    );
     const observer = new QueryObserver<typeof raw>(client, {
       queryKey: selectedKey,
       enabled: false,
@@ -30,10 +33,11 @@ describe("installed TanStack observer behavior", () => {
         observer.getCurrentResult().data!.models.map((m) => m.model),
       ).toEqual(["b"]);
       expect(client.getQueryData(selectedKey)).toEqual(raw);
-      bridge.update({
-        revision: 2,
-        providers: { custom: { mode: "selected", modelIds: ["c"] } },
-      });
+      bridge.update(
+        bridgeState(
+          snapshotOf({ custom: limit("c") }, { hiddenModels: "remove" }),
+        ),
+      );
       expect(
         observer.getCurrentResult().data!.models.map((m) => m.model),
       ).toEqual(["c"]);
@@ -52,17 +56,20 @@ describe("installed TanStack observer behavior", () => {
     });
     const unsubscribe = observer.subscribe(() => {});
     expect(observer.getCurrentResult().isPlaceholderData).toBe(true);
-    const bridge = attachQueryBridge(client as unknown as QueryClientAdapter, {
-      revision: 1,
-      providers: { custom: { mode: "selected", modelIds: ["b"] } },
-    });
+    const bridge = attachQueryBridge(
+      client as unknown as QueryClientAdapter,
+      bridgeState(
+        snapshotOf({ custom: limit("b") }, { hiddenModels: "remove" }),
+      ),
+    );
     expect(
       observer.getCurrentResult().data!.models.map((m) => m.model),
     ).toEqual(["b"]);
-    bridge.update({
-      revision: 2,
-      providers: { custom: { mode: "selected", modelIds: ["c"] } },
-    });
+    bridge.update(
+      bridgeState(
+        snapshotOf({ custom: limit("c") }, { hiddenModels: "remove" }),
+      ),
+    );
     expect(
       observer.getCurrentResult().data!.models.map((m) => m.model),
     ).toEqual(["c"]);
@@ -75,10 +82,12 @@ describe("installed TanStack observer behavior", () => {
   it("keeps raw cached availability intact while new native observers receive a projection", () => {
     const client = new QueryClient();
     client.setQueryData(key, raw);
-    const bridge = attachQueryBridge(client as unknown as QueryClientAdapter, {
-      revision: 1,
-      providers: { custom: { mode: "selected", modelIds: ["b"] } },
-    });
+    const bridge = attachQueryBridge(
+      client as unknown as QueryClientAdapter,
+      bridgeState(
+        snapshotOf({ custom: limit("b") }, { hiddenModels: "remove" }),
+      ),
+    );
     const observer = new QueryObserver<typeof raw>(client, {
       queryKey: key,
       enabled: false,

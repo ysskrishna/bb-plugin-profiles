@@ -3,81 +3,108 @@ import { z } from "zod";
 import {
   MAX_ID_LENGTH,
   MAX_MODELS,
+  MAX_NAME_LENGTH,
+  MAX_PROJECTS,
   MAX_PROVIDERS,
   normalizeRule,
   validId,
-} from "./preferences";
+} from "./profiles";
 
-export const PREFERENCES_CHANGED = "preferences-changed";
+export const PROFILES_CHANGED = "profiles-changed";
 export const idSchema = z
   .string()
   .min(1)
   .max(MAX_ID_LENGTH)
   .refine(validId, "Invalid ID");
+const nameSchema = z.string().trim().min(1).max(MAX_NAME_LENGTH);
 export const ruleSchema = z
   .object({
-    mode: z.enum(["all", "selected"]),
+    enabled: z.boolean(),
+    limit: z.boolean(),
     modelIds: z.array(idSchema).max(MAX_MODELS),
-    favoriteIds: z.array(idSchema).max(MAX_MODELS).optional(),
-    modelOrder: z.array(idSchema).max(MAX_MODELS).optional(),
-    preferredModelId: idSchema.optional(),
-    preferredReasoning: idSchema.optional(),
   })
   .strict()
   .refine(
-    (rule) => rule.mode === "all" || rule.modelIds.length > 0,
+    (rule) => !rule.limit || rule.modelIds.length > 0,
     "Select at least one model",
   )
   .transform(normalizeRule);
-export const snapshotSchema = z
+export const defaultModelSchema = z
   .object({
-    revision: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
+    providerId: idSchema,
+    model: idSchema,
+    reasoningLevel: idSchema.optional(),
+  })
+  .strict();
+export const profileSchema = z
+  .object({
+    id: idSchema,
+    name: nameSchema,
+    projectIds: z.array(idSchema).max(MAX_PROJECTS),
     providers: z
-      .record(idSchema, ruleSchema)
+      .record(
+        idSchema,
+        z
+          .object({
+            enabled: z.boolean(),
+            limit: z.boolean(),
+            modelIds: z.array(idSchema).max(MAX_MODELS),
+          })
+          .strict(),
+      )
       .refine(
         (providers) => Object.keys(providers).length <= MAX_PROVIDERS,
         "Too many configured providers",
       ),
+    defaultModel: defaultModelSchema.optional(),
   })
   .strict();
-export const routingSchema = z
+export const hiddenModelsSchema = z.enum(["more", "remove"]);
+export const snapshotSchema = z
   .object({
-    environmentId: idSchema.optional(),
-    hostId: idSchema.optional(),
-    projectId: idSchema.optional(),
+    revision: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
+    hiddenModels: hiddenModelsSchema,
+    profiles: z.array(profileSchema).min(1),
   })
-  .strict()
-  .refine(
-    (routing) =>
-      !routing.environmentId || (!routing.hostId && !routing.projectId),
-    "Environment routing cannot include host or project routing",
-  );
-export type Routing = z.infer<typeof routingSchema>;
-const revisionSchema = z
-  .number()
-  .int()
-  .nonnegative()
-  .max(Number.MAX_SAFE_INTEGER);
+  .strict();
 export const rpcContract = defineRpcContract({
-  getPreferences: { input: z.null(), output: snapshotSchema },
-  saveProvider: {
+  getSnapshot: { input: z.null(), output: snapshotSchema },
+  setHiddenModels: {
+    input: z.object({ mode: hiddenModelsSchema }).strict(),
+    output: snapshotSchema,
+  },
+  createProfile: {
+    input: z.object({ name: nameSchema, copyFromId: idSchema }).strict(),
+    output: z.object({ snapshot: snapshotSchema, id: idSchema }).strict(),
+  },
+  renameProfile: {
+    input: z.object({ id: idSchema, name: nameSchema }).strict(),
+    output: snapshotSchema,
+  },
+  deleteProfile: {
+    input: z.object({ id: idSchema }).strict(),
+    output: snapshotSchema,
+  },
+  setProfileProjects: {
+    input: z
+      .object({ id: idSchema, projectIds: z.array(idSchema).max(MAX_PROJECTS) })
+      .strict(),
+    output: snapshotSchema,
+  },
+  setProvider: {
+    input: z
+      .object({ profileId: idSchema, providerId: idSchema, rule: ruleSchema })
+      .strict(),
+    output: snapshotSchema,
+  },
+  setDefaultModel: {
     input: z
       .object({
-        expectedRevision: revisionSchema,
-        providerId: idSchema,
-        rule: ruleSchema,
-        routing: routingSchema.optional(),
+        profileId: idSchema,
+        defaultModel: defaultModelSchema.nullable(),
       })
       .strict(),
     output: snapshotSchema,
   },
-  resetPreferences: {
-    input: z
-      .object({
-        expectedRevision: revisionSchema,
-        providerId: idSchema.optional(),
-      })
-      .strict(),
-    output: snapshotSchema,
-  },
+  reset: { input: z.null(), output: snapshotSchema },
 });

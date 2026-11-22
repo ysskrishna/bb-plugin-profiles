@@ -1,34 +1,28 @@
-# Model Manager V1
+# Profiles
 
-Approved direction: extend Model Filter as a separate plugin for the normal BB app. No core patch or BB fork. Fallback is deferred. The user accepted documenting menu-only filtering as a known limitation.
+Per-project profiles that control which providers and models show in BB's model picker and the default model new threads start on. No core patch or BB fork.
 
-## Accepted scope
+## Scope
 
-- Provider-wide selected model IDs shared across clients, with independent native catalogs per machine/workspace.
-- Favorites, ordering within favorite/non-favorite groups, and a preferred model with supported reasoning.
-- Explicit Use preferred model action in new-thread composers. No automatic selection, submission, permission change or workspace change.
-- Existing current models remain available; filtered selections do not become access restrictions.
-- Public settings/RPC/SQLite/CLI/composer APIs, with one isolated private native-picker adapter.
-- Provider-bound edit drafts, atomic revisions, unavailable-ID retention, and reconnect synchronization.
-- Known limitations visible in settings, README and skill documentation.
+- Default profile plus named profiles; a new profile starts as a copy of any profile. Each project belongs to at most one profile; unassigned projects use Default.
+- Per profile and provider: on or off, optional limit to selected models, and one default model (provider, model, reasoning level).
+- Global: unselected models are shown under More models (default) or removed from the picker.
+- A new-thread composer selects its project's default model on open and when the project changes, unless the user chose a model in that draft. Never a fast service tier.
+- Settings save on their own, reach other connected windows without reload, and are opened from a settings button in the new-thread composer.
+
+## Out of scope
+
+Fallback model; enforcement for CLI, automations and workflows; manual model ordering and favorites; custom model registration; switching the provider of an existing thread.
 
 ## Acceptance
 
-1. Legacy preference snapshots still load without migration or data loss.
-2. Five-part and six-part selected-model query keys receive the same projection; raw query caches remain unchanged.
-3. Saving favorites/order does not change enabled IDs or native model/option metadata.
-4. Preferred models must be enabled, known or previously retained; newly invented IDs and unsupported reasoning are rejected before persistence.
-5. Hiding a preferred model clears that preference in the editing draft; hiding a favorite does not re-enable it.
-6. Stale saves, failed discovery and failed writes preserve drafts and persisted state.
-7. Applying a preferred selection requires an explicit click and reports host rejection/reconciliation accurately.
-8. Native current-model exceptions, disabled-plugin restoration, routing context, and simultaneous pickers remain independent.
-9. UI/CLI edits use the same server validation, transactions and realtime signal.
-10. Desktop/narrow browser checks exercise the actual plugin settings, lifecycle overlay and TanStack adapter against labeled fixtures.
-
-## Deferred and known limitations
-
-Universal execution restrictions, automatic fixed defaults, custom-model registration UI and fallback need additional BB support or separate product decisions. Do not present them as implemented. Custom IDs registered through native BB configuration can be selected after discovery. No changes to standalone provider CLIs or billing are made.
+1. Settings use shared settings components, have no Apply or Discard, and show Saved after a change.
+2. Profiles can be created by copying, renamed and deleted; Default cannot be renamed or deleted; deleting returns projects to Default.
+3. A project can belong to only one profile.
+4. A provider turned off in a project's profile is absent from that project's provider picker, except for the provider of an existing selection.
+5. With a limit on, only selected models are in the main list; the rest are under More models or absent. A thread's current model stays selectable.
+6. A new-thread composer applies its project's default and re-applies on project change without overwriting a user's pick.
 
 ## Verification
 
-Use the exact npm commands in README.md and the browser procedure in e2e/README.md. Use real SQLite tests for persistence and real TanStack observers for the compatibility adapter. Live BB installation is not inferred from a passing isolated harness.
+Use the npm commands in README.md and the browser procedure in e2e/README.md. Persistence is tested against real SQLite and picker filtering against real TanStack observers. A live BB installation is not inferred from a passing isolated harness.
