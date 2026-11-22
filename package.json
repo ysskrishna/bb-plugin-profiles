@@ -1,5 +1,5 @@
 {
-  "name": "bb-plugin-model-manager",
+  "name": "bb-plugin-profiles",
   "version": "0.1.0",
   "type": "module",
   "engines": {
@@ -8,8 +8,8 @@
     "node": ">=22.19.0"
   },
   "bb": {
-    "name": "Model Manager",
-    "description": "Curate provider model menus, favorites, order and preferred selections across connected BB clients.",
+    "name": "Profiles",
+    "description": "Choose which providers and models appear in the model picker for each project, and the default model new threads start on.",
     "branding": {
       "icon": "./assets/icon.svg"
     },
@@ -62,7 +62,7 @@
   },
   "private": true,
   "license": "MIT",
-  "description": "Curate provider model menus, favorites, order and preferred selections across connected BB clients.",
+  "description": "Choose which providers and models appear in the model picker for each project, and the default model new threads start on.",
   "files": [
     "dist/",
     "*.ts",
