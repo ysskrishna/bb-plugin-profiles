@@ -13,6 +13,7 @@ import "./style.css";
 
 function App() {
   const [selection, setSelection] = useState({
+    projectId: "p-aribills",
     providerId: "codex",
     model: "gpt-6.2-sol",
     reasoningLevel: "high",
@@ -29,7 +30,7 @@ function App() {
       <main className={dark ? "dark" : ""}>
         <header>
           <div>
-            <h1>Model Manager</h1>
+            <h1>Profiles</h1>
             <p>
               Isolated verification fixture. Example catalogs; no BB accounts or
               inference calls.
@@ -75,6 +76,8 @@ function App() {
           />
           <ComposerContext.Provider
             value={{
+              key: "fixture-draft",
+              isEmpty: true,
               selection,
               isSubmitting: false,
               isRunning: false,
