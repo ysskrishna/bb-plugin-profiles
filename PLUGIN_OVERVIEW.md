@@ -2,7 +2,7 @@
 
 Choose which providers and models appear in BB's model picker for each project, and the default model new threads start on. Make a profile by copying another, assign projects to it, switch providers on or off, and limit a provider to the models you select. Projects without a profile use Default.
 
-Unselected models stay reachable under More models, or can be removed from the picker entirely. A new-thread composer selects its project's default model and reasoning level until you pick another. Settings save on their own and reach every window connected to the BB server. A gear button in the new-thread composer opens them.
+Unselected models stay reachable under More models, or can be removed from the picker entirely. A new-thread composer selects its project's default model and reasoning level until you pick another. Settings save on their own and reach every window connected to the BB server. A settings button (sliders icon) in the new-thread composer opens them.
 
 ## Requirements and limits
 

@@ -11,7 +11,7 @@ Profiles extends Model Filter at c651107. LICENSE retains the upstream MIT notic
 | query-bridge.ts       | Sole private React/TanStack boundary; five/six-field query keys, composed observer selectors, unchanged raw cache, disposal |
 | profiles-client.ts    | Client snapshot, runtime status, environment-to-project map and the new-thread composer's project                           |
 | composer-default.ts   | Pure rules for when a composer draft gets its profile's default model                                                       |
-| ComposerProfile.tsx   | New-thread composer action: publishes the project, applies defaults, gear button to settings                                |
+| ComposerProfile.tsx   | New-thread composer action: publishes the project, applies defaults, settings button                                        |
 | app.tsx               | Overlay lifecycle, realtime and reconnect reads, environment map, composer and settings registration                        |
 | SettingsPage.tsx etc. | Settings page (ProfilesSection, ProvidersSection), built from settings-ui.tsx; data hooks in settings-data.ts               |
 | e2e/                  | Isolated browser fixture; no live BB account calls                                                                          |
