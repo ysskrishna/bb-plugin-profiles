@@ -1,47 +1,40 @@
-# Model Manager
+# Profiles
 
-Curate the models shown in BB's native menus, separately for each provider. Save favorites, choose their order, and keep a preferred model and reasoning level one click away in the new-thread composer. Preferences are shared by devices connected to the same BB server.
+Choose which providers and models appear in BB's model picker for each project, and the default model new threads start on. Settings are shared by every device connected to the same BB server.
 
-Based on [Model Filter](https://github.com/werserk/bb-plugin-model-filter) at `c651107`, retaining its MIT license and transactional preference store. This is a separate plugin; it does not modify BB itself.
+Based on [Model Filter](https://github.com/werserk/bb-plugin-model-filter) at `c651107`, retaining its MIT license and transactional preference store. This is a separate plugin; it does not modify BB itself. It was called Model Manager before it became Profiles.
 
 ## Use
 
-Open Settings -> Plugins -> Model Manager. Choose a provider, edit its models, and Apply. Select all and Deselect all act on the entire catalog, including search results. At least one currently available model is required; disable the entire provider through BB's own provider settings when needed.
+Open Settings -> Plugins -> Profiles, or click the gear button in a new-thread composer. Every change saves on its own.
 
-- Configured providers show only selected model IDs. Newly discovered IDs stay hidden until selected. Reset provider restores its full native list, including future models.
-- Star a model to put it before other models. Arrow buttons reorder within the favorite or ordinary group. IDs and native capability metadata remain intact.
-- Choose a preferred model and optional reasoning level. Click Use preferred model in the new-thread composer to apply it for the currently selected provider, using the standard service tier. Nothing is sent automatically.
-- Existing picker selections remain available as Current even when hidden. Applying preferences does not switch an existing conversation's model.
-- The catalog source control selects the machine/workspace used for discovery. Saved preferences remain provider-wide. The preview uses the same source.
-- Concurrent edits are revision-checked. A conflict preserves your draft and lets you reload the latest saved selection.
+- **Profiles.** Default always exists and covers every project without a profile. Create a profile by copying any profile, then it changes on its own. Assign projects to it; a project belongs to one profile at most. Duplicate, Rename and Delete are in the profile's menu (Default can only be duplicated). Deleting a profile returns its projects to Default.
+- **Default model.** Each profile can name one provider, model and reasoning level. Opening a new-thread composer in one of its projects selects it, and switching project selects the new project's default. A model you choose in that draft is not overwritten. The standard service tier is always used.
+- **Providers in a profile.** Turn a provider off to remove it from the picker, or limit it to selected models. New models stay hidden until you select them. The last selected model cannot be unchecked. Saved model IDs that BB no longer lists appear under Unavailable and can be removed.
+- **Everywhere.** Unselected models are shown under More models, or removed from the picker. Reset everything removes all profiles and rules.
+
+Existing Model Manager rules move into Default on upgrade (each provider's selection becomes its limit, and the first preferred model becomes the default model). Favorites and manual order are dropped.
 
 ## Known limitations
 
-These are accepted V1 boundaries, not claims that BB enforces a model policy:
+These are accepted boundaries, not claims that BB enforces a model policy:
 
-1. **Menu filtering only.** CLI/API requests, saved automations, tasks, workflows, and other plugins can still explicitly request a hidden model. A current hidden selection remains usable in its picker.
-2. **Explicit preferred selection.** The preferred-model button is not an automatic default across BB. BB's remembered/project defaults are not overwritten. There is no fallback routing.
-3. **Custom models remain BB configuration.** Register additional model IDs using BB's supported `customModels` configuration; Model Manager can then curate them. It does not create provider access or write BB's configuration file.
-4. **Version-specific adapter.** Settings, storage, RPC and the preferred-model action use public APIs. Native filtering also uses private React/TanStack observer integration. A future BB change can break it. When query-client discovery fails, the plugin reports inactivity and leaves native menus usable. Do not run it alongside another model-filtering adapter.
-5. Independent BB servers do not synchronize preferences. This separate plugin does not automatically import another plugin's database.
+1. **Picker filtering only.** CLI/API requests, saved automations, tasks, workflows and other plugins can still request any model. A thread's current model, and the provider it uses, stay selectable even when hidden.
+2. **Defaults apply to new-thread composers only.** There is no fallback routing, and existing threads are not switched.
+3. **Custom models remain BB configuration.** Register extra model IDs through BB's supported `customModels` configuration; Profiles can then include them.
+4. **Version-specific adapter.** Settings, storage, RPC and the composer action use public APIs. Picker filtering also uses a private React/TanStack observer integration, and the gear button navigates by pushing the settings route because BB has no API for that. A future BB change can break either. When query-client discovery fails, the plugin reports inactivity and leaves native lists usable. Do not run it alongside another model-filtering plugin.
+5. Independent BB servers do not synchronize profiles.
 
-The compatibility target is **BB 0.50.1 / Plugin SDK 0.6.157**. Verification includes automated contracts, an isolated browser harness and local installation against the real BB frontend/server. Broader versions and platforms remain unverified. See [compatibility](docs/compatibility.md).
+The compatibility target is **BB 0.50.1 / Plugin SDK 0.6.157**. See [compatibility](docs/compatibility.md).
 
 ## CLI
 
 ```sh
-bb model-manager status --json
-bb model-manager select codex <model-id> <another-model-id>
-bb model-manager favorite codex <model-id>
-bb model-manager unfavorite codex <model-id>
-bb model-manager order codex <first-id> <second-id>
-bb model-manager prefer codex <model-id> high
-bb model-manager clear-preferred codex
-bb model-manager all codex
-bb model-manager reset codex
+bb profiles status --json
+bb profiles reset
 ```
 
-All commands accept `--json`. Use exact provider/model IDs from `bb provider models <provider>`. `all` restores the full catalog while retaining preferences; `reset` removes the provider's entire rule. Reset without a provider removes every rule. CLI preference edits affect menus; they do not restrict execution.
+`status` lists profiles, their projects, provider rules, default models and the hidden-models mode. `reset` removes every profile and rule. Both accept `--json`. Edit profiles in the settings page.
 
 ## Development and installation
 
@@ -52,8 +45,8 @@ npm run check
 npm run dev:fixture
 ```
 
-The fixture is an isolated browser harness with labeled example catalogs and no account or inference calls. Open the URL printed by Vite. It is not a second BB installation.
+The fixture is an isolated browser harness with labeled example catalogs and no account or inference calls. Open the URL printed by Vite. It is not a second BB installation and does not compile BB's theme.
 
-After reviewing a build, install from the checkout with `bb plugin install .`. No live installation or default-branch merge is performed by the build/check commands. This repository is not claimed to be published in the BB marketplace.
+After reviewing a build, install from the checkout with `bb plugin install .`. The plugin id is derived from the package name `bb-plugin-profiles`. This repository is not claimed to be published in the BB marketplace.
 
-[Specification](docs/spec.md) | [Architecture](docs/ARCHITECTURE.md) | [Implementation](tasks/plan.md) | [Upstream license](LICENSE)
+[Specification](docs/spec.md) | [Architecture](docs/ARCHITECTURE.md) | [Compatibility](docs/compatibility.md) | [Upstream license](LICENSE)
