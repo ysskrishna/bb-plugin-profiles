@@ -2,7 +2,11 @@
 // settings do; each section shows Saving.../Saved beside its title.
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useRealtime, useRpc } from "@get-bb/plugin-sdk/app";
-import { PROFILES_CHANGED, type rpcContract } from "./contract";
+import {
+  CUSTOM_MODELS_CHANGED,
+  PROFILES_CHANGED,
+  type rpcContract,
+} from "./contract";
 import { ProfilesSection, type ProfileActions } from "./ProfilesSection";
 import { ProvidersSection } from "./ProvidersSection";
 import {
@@ -11,7 +15,12 @@ import {
   useProfilesView,
 } from "./profiles-client";
 import { DEFAULT_PROFILE_ID, type Snapshot } from "./profiles";
-import { useCatalogs, useProjects, useProviders } from "./settings-data";
+import {
+  useCatalogs,
+  useProjects,
+  useProviders,
+  type CustomModelOption,
+} from "./settings-data";
 import {
   SettingsSection,
   SettingsSelect,
@@ -36,7 +45,13 @@ export function SettingsPage() {
   const view = useProfilesView();
   const { providers } = useProviders();
   const projects = useProjects();
-  const catalogs = useCatalogs(providers.map((p) => p.id));
+  const [catalogVersion, setCatalogVersion] = useState(0);
+  const catalogs = useCatalogs(
+    providers.map((p) => p.id),
+    catalogVersion,
+  );
+  const [customModels, setCustomModels] = useState<CustomModelOption[]>([]);
+  const [customWarning, setCustomWarning] = useState<string | null>(null);
   const [selectedId, setSelectedId] = useState(DEFAULT_PROFILE_ID);
   const [feedback, setFeedback] = useState<{
     section: Section;
@@ -57,6 +72,21 @@ export function SettingsPage() {
   }, [rpc]);
   useEffect(load, [load]);
   useRealtime(PROFILES_CHANGED, load);
+
+  const loadCustomModels = useCallback(
+    (refreshCatalogs: boolean) => {
+      rpc.call("listCustomModels", null).then(
+        (result) => {
+          setCustomModels(result.models);
+          if (refreshCatalogs) setCatalogVersion((v) => v + 1);
+        },
+        () => {},
+      );
+    },
+    [rpc],
+  );
+  useEffect(() => loadCustomModels(false), [loadCustomModels]);
+  useRealtime(CUSTOM_MODELS_CHANGED, () => loadCustomModels(true));
 
   useEffect(() => {
     if (feedback?.status !== "saved") return;
@@ -143,6 +173,48 @@ export function SettingsPage() {
       ),
   };
 
+  const addCustomModel = async (
+    providerId: string,
+    model: string,
+    displayName: string | undefined,
+  ) => {
+    setCustomWarning(null);
+    const done = await save("providers", async (current) => {
+      const added = await rpc.call("addCustomModel", {
+        providerId,
+        model,
+        // An absent name must be left out: undefined is not a JSON value.
+        ...(displayName ? { displayName } : {}),
+      });
+      setCustomModels(added.models);
+      setCatalogVersion((v) => v + 1);
+      setCustomWarning(added.warning ?? null);
+      const rule = current.profiles.find((p) => p.id === selected.id)
+        ?.providers[providerId];
+      if (!rule?.limit) return { snapshot: current, value: true };
+      const snapshot = await rpc.call("setProvider", {
+        profileId: selected.id,
+        providerId,
+        rule: { ...rule, modelIds: [...new Set([...rule.modelIds, model])] },
+      });
+      return { snapshot, value: true };
+    });
+    return done === true;
+  };
+  const removeCustomModel = async (providerId: string, model: string) => {
+    setCustomWarning(null);
+    await save("providers", async (current) => {
+      const removed = await rpc.call("removeCustomModel", {
+        providerId,
+        model,
+      });
+      setCustomModels(removed.models);
+      setCatalogVersion((v) => v + 1);
+      setCustomWarning(removed.warning ?? null);
+      return { snapshot: current, value: true };
+    });
+  };
+
   return (
     <div className="max-w-3xl space-y-6 pb-4">
       {view.runtime.state === "unsupported" ? (
@@ -167,6 +239,10 @@ export function SettingsPage() {
         catalogs={catalogs}
         status={statusFor("providers")}
         error={errorFor("providers")}
+        customModels={customModels}
+        customWarning={customWarning}
+        onAddCustomModel={addCustomModel}
+        onRemoveCustomModel={removeCustomModel}
         onChange={(providerId, update) =>
           void save("providers", (current) => {
             const profile = current.profiles.find((p) => p.id === selected.id);

@@ -57,6 +57,11 @@ function commit(next: Snapshot) {
   for (const fn of listeners.get("profiles-changed") ?? []) fn();
   return snapshot;
 }
+let customModels: {
+  providerId: string;
+  model: string;
+  displayName?: string;
+}[] = [];
 const rpc = {
   async call(method: string, input: any) {
     switch (method) {
@@ -89,6 +94,17 @@ const rpc = {
         );
       case "reset":
         return commit(INITIAL_SNAPSHOT);
+      case "listCustomModels":
+        return { models: customModels };
+      case "addCustomModel":
+        customModels = [...customModels, input];
+        return { models: customModels };
+      case "removeCustomModel":
+        customModels = customModels.filter(
+          (c) =>
+            !(c.providerId === input.providerId && c.model === input.model),
+        );
+        return { models: customModels };
     }
     throw new Error(`Unknown fixture method ${method}`);
   },

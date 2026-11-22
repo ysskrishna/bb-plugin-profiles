@@ -1,6 +1,6 @@
 ---
 name: profiles
-description: Inspect or reset per-project model profiles that control BB's model picker and the default model for new threads.
+description: Inspect or reset per-project model profiles that control BB's model picker and the default model for new threads, and add or remove custom model IDs.
 ---
 
 # Profiles
@@ -9,6 +9,8 @@ Profiles decide which providers and models show in BB's model picker for each pr
 
 - `bb profiles status [--json]` lists every profile with its projects, provider rules (on or off, limited to N models), default model, and the hidden-models mode. Read it before explaining or changing anything.
 - `bb profiles reset [--json]` removes every profile and rule and restores the Default profile with no limits. Run it only when the user explicitly asks to reset everything.
+
+- `bb profiles models list [--json]` lists custom model IDs. `bb profiles models add <provider> <model> [display name...]` adds one to BB's `customModels` config for every profile (refused if BB already lists it); `bb profiles models remove <provider> <model>` removes one. Use the provider id from the picker, for example `acp-cursor`. The provider must accept the ID; an ACP agent may reject an unknown one when a thread starts.
 
 Create, rename, assign and edit profiles in the settings page; they save on their own and reach every connected window.
 

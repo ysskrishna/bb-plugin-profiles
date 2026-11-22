@@ -31,6 +31,7 @@ const state = vi.hoisted(() => {
   });
   return {
     snapshot: null as unknown as Snapshot,
+    custom: [] as { providerId: string; model: string; displayName?: string }[],
     calls: [] as [string, unknown][],
     handlers: {} as Record<string, (input: any) => unknown>,
     rpc: {
@@ -55,7 +56,14 @@ const state = vi.hoisted(() => {
           providers: [],
           models:
             providerId === "alpha"
-              ? [model("a1", ["low", "high"]), model("a2"), model("a3")]
+              ? [
+                  model("a1", ["low", "high"]),
+                  model("a2"),
+                  model("a3"),
+                  ...state.custom
+                    .filter((c) => c.providerId === "alpha")
+                    .map((c) => model(c.model)),
+                ]
               : [model("b1")],
           selectedOnlyModels: [],
           modelLoadError: null,
@@ -98,6 +106,19 @@ function install() {
     setDefaultModel: ({ profileId, defaultModel }) =>
       commit(setDefaultModel(state.snapshot, profileId, defaultModel)),
     reset: () => commit(INITIAL_SNAPSHOT),
+    listCustomModels: () => ({ models: state.custom }),
+    addCustomModel: (input) => {
+      if (state.custom.some((c) => c.model === input.model))
+        throw new Error("HTTP 400: Already a custom model");
+      state.custom = [...state.custom, input];
+      return { models: state.custom };
+    },
+    removeCustomModel: ({ providerId, model }) => {
+      state.custom = state.custom.filter(
+        (c) => !(c.providerId === providerId && c.model === model),
+      );
+      return { models: state.custom, warning: "BB could not reload" };
+    },
   };
   state.rpc.call = async (method, input) => {
     state.calls.push([method, input]);
@@ -107,6 +128,7 @@ function install() {
 }
 beforeEach(() => {
   state.calls = [];
+  state.custom = [];
   revision += 10;
   state.snapshot = { ...INITIAL_SNAPSHOT, revision };
   receiveSnapshot(state.snapshot);
@@ -360,6 +382,109 @@ describe("settings page", () => {
       expect(
         (screen.getByLabelText("Hidden models") as HTMLSelectElement).value,
       ).toBe("more"),
+    );
+  });
+
+  it("adds a custom model, refreshes the catalog and selects it when Limit is on", async () => {
+    await ready();
+    const limitSwitch = await screen.findByRole("switch", {
+      name: "Limit to selected models",
+    });
+    await waitFor(() =>
+      expect(limitSwitch.hasAttribute("disabled")).toBe(false),
+    );
+    fireEvent.click(limitSwitch);
+    const list = await screen.findByRole("list", { name: "Alpha models" });
+    fireEvent.change(screen.getByLabelText("Model ID"), {
+      target: { value: "a-new" },
+    });
+    fireEvent.change(screen.getByLabelText("Name"), {
+      target: { value: " New one " },
+    });
+    fireEvent.submit(screen.getByLabelText("Model ID").closest("form")!);
+    await waitFor(() =>
+      expect(called("addCustomModel")[0][1]).toEqual({
+        providerId: "alpha",
+        model: "a-new",
+        displayName: "New one",
+      }),
+    );
+    await waitFor(() =>
+      expect(
+        within(list).queryByRole("checkbox", { name: /A-NEW/ }),
+      ).toBeTruthy(),
+    );
+    await waitFor(() =>
+      expect(state.snapshot.profiles[0].providers.alpha.modelIds).toContain(
+        "a-new",
+      ),
+    );
+    expect(
+      (
+        within(list).getByRole("checkbox", {
+          name: /A-NEW/,
+        }) as HTMLInputElement
+      ).checked,
+    ).toBe(true);
+    expect((screen.getByLabelText("Model ID") as HTMLInputElement).value).toBe(
+      "",
+    );
+    expect(
+      within(
+        screen.getByRole("list", { name: "Alpha custom models" }),
+      ).getByText("New one"),
+    ).toBeTruthy();
+  });
+
+  it("does not change the profile when Limit is off", async () => {
+    await ready();
+    await screen.findByRole("switch", { name: "Limit to selected models" });
+    fireEvent.change(screen.getByLabelText("Model ID"), {
+      target: { value: "a-new" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Add model" }));
+    await waitFor(() => expect(called("addCustomModel")).toHaveLength(1));
+    await screen.findByText("Saved");
+    expect(called("addCustomModel")[0][1]).toEqual({
+      providerId: "alpha",
+      model: "a-new",
+    });
+    // undefined is not a JSON value, so the RPC refuses a present-but-empty key.
+    expect(called("addCustomModel")[0][1]).not.toHaveProperty("displayName");
+    expect(called("setProvider")).toHaveLength(0);
+  });
+
+  it("removes a custom model and shows the reload warning", async () => {
+    state.custom = [{ providerId: "alpha", model: "a-x", displayName: "Ax" }];
+    await ready();
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Remove custom model a-x" }),
+    );
+    await waitFor(() =>
+      expect(called("removeCustomModel")[0][1]).toEqual({
+        providerId: "alpha",
+        model: "a-x",
+      }),
+    );
+    expect(await screen.findByText("BB could not reload")).toBeTruthy();
+    expect(
+      screen.queryByRole("list", { name: "Alpha custom models" }),
+    ).toBeNull();
+  });
+
+  it("shows a refused add inline and keeps the typed ID", async () => {
+    state.custom = [{ providerId: "beta", model: "dup" }];
+    await ready();
+    await screen.findByRole("switch", { name: "Limit to selected models" });
+    fireEvent.change(screen.getByLabelText("Model ID"), {
+      target: { value: "dup" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Add model" }));
+    expect((await screen.findByRole("alert")).textContent).toMatch(
+      /Already a custom model/,
+    );
+    expect((screen.getByLabelText("Model ID") as HTMLInputElement).value).toBe(
+      "dup",
     );
   });
 });

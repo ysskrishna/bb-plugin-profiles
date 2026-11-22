@@ -6,6 +6,7 @@
 - Add per-project profiles: Default plus named profiles copied from any profile, each with provider on/off, optional limits to selected models and a default model.
 - Show unselected models under More models, or remove them, with one global choice.
 - Select a project's default model and reasoning level in new-thread composers without overwriting a model the user picked; add a settings button to the composer.
+- Add custom models: add or remove extra model IDs per provider in settings and with `bb profiles models list|add|remove`. They are written to the `customModels` list in BB's config file (atomic, other keys preserved, never overwriting an unparseable file) and BB's config is reloaded.
 - Rebuild settings as autosaving cards in the Idle Compact style.
 - Convert existing Model Manager rules into Default on first change. Favorites, ordering, the preferred-model button and the favorite/order/prefer CLI commands are removed.
 - Target BB 0.50.1 and keep filtering for selected-model discovery queries.
