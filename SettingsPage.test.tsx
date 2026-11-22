@@ -449,6 +449,8 @@ describe("settings page", () => {
       providerId: "alpha",
       model: "a-new",
     });
+    // undefined is not a JSON value, so the RPC refuses a present-but-empty key.
+    expect(called("addCustomModel")[0][1]).not.toHaveProperty("displayName");
     expect(called("setProvider")).toHaveLength(0);
   });
 

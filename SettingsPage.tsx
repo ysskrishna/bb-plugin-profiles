@@ -183,7 +183,8 @@ export function SettingsPage() {
       const added = await rpc.call("addCustomModel", {
         providerId,
         model,
-        displayName,
+        // An absent name must be left out: undefined is not a JSON value.
+        ...(displayName ? { displayName } : {}),
       });
       setCustomModels(added.models);
       setCatalogVersion((v) => v + 1);
