@@ -24,6 +24,7 @@ export interface Snapshot {
 
 export const DEFAULT_PROFILE_ID = "default";
 export const MAX_ID_LENGTH = 512;
+export const MAX_CUSTOM_NAME_LENGTH = 80;
 export const MAX_NAME_LENGTH = 60;
 export const MAX_MODELS = 1024;
 export const MAX_PROVIDERS = 128;

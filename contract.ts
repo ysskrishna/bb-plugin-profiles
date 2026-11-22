@@ -1,6 +1,7 @@
 import { defineRpcContract } from "@get-bb/plugin-sdk";
 import { z } from "zod";
 import {
+  MAX_CUSTOM_NAME_LENGTH,
   MAX_ID_LENGTH,
   MAX_MODELS,
   MAX_NAME_LENGTH,
@@ -11,6 +12,7 @@ import {
 } from "./profiles";
 
 export const PROFILES_CHANGED = "profiles-changed";
+export const CUSTOM_MODELS_CHANGED = "custom-models-changed";
 export const idSchema = z
   .string()
   .min(1)
@@ -67,6 +69,19 @@ export const snapshotSchema = z
     profiles: z.array(profileSchema).min(1),
   })
   .strict();
+export const customModelSchema = z
+  .object({
+    providerId: idSchema,
+    model: idSchema,
+    displayName: z.string().optional(),
+  })
+  .strict();
+const customModelsResultSchema = z
+  .object({
+    models: z.array(customModelSchema),
+    warning: z.string().optional(),
+  })
+  .strict();
 export const rpcContract = defineRpcContract({
   getSnapshot: { input: z.null(), output: snapshotSchema },
   setHiddenModels: {
@@ -107,4 +122,27 @@ export const rpcContract = defineRpcContract({
     output: snapshotSchema,
   },
   reset: { input: z.null(), output: snapshotSchema },
+  listCustomModels: {
+    input: z.null(),
+    output: z.object({ models: z.array(customModelSchema) }).strict(),
+  },
+  addCustomModel: {
+    input: z
+      .object({
+        providerId: idSchema,
+        model: idSchema,
+        displayName: z
+          .string()
+          .trim()
+          .min(1)
+          .max(MAX_CUSTOM_NAME_LENGTH)
+          .optional(),
+      })
+      .strict(),
+    output: customModelsResultSchema,
+  },
+  removeCustomModel: {
+    input: z.object({ providerId: idSchema, model: idSchema }).strict(),
+    output: customModelsResultSchema,
+  },
 });

@@ -1,4 +1,7 @@
-import { afterEach, describe, expect, it } from "vitest";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { createFakePluginHost } from "@get-bb/plugin-sdk/testing";
 import plugin from "./server";
 
@@ -227,5 +230,88 @@ describe("CLI", () => {
       1,
     );
     expect((await harness.behavior.runCli(["reset", "x"])).exitCode).toBe(1);
+  });
+});
+
+describe("custom models", () => {
+  async function withDataDir() {
+    const dataDir = await mkdtemp(join(tmpdir(), "profiles-server-"));
+    const reloadConfig = vi.fn(async () => ({ ok: true }));
+    const host = createFakePluginHost({
+      pluginId: "profiles",
+      dataDir,
+      sdk: {
+        system: {
+          reloadConfig,
+          executionOptions: async () => ({
+            models: [{ model: "native" }],
+            selectedOnlyModels: [{ model: "hidden-native" }],
+          }),
+        },
+      } as never,
+    });
+    hosts.push(host);
+    await plugin(host.bb);
+    cleanups.push(() => rm(dataDir, { recursive: true, force: true }));
+    return { host, dataDir, reloadConfig };
+  }
+  const cleanups: (() => Promise<unknown>)[] = [];
+  afterEach(async () => {
+    for (const cleanup of cleanups.splice(0)) await cleanup();
+  });
+
+  it("adds, lists and removes through RPC, publishing a change each time", async () => {
+    const { host, dataDir, reloadConfig } = await withDataDir();
+    const call = (name: string, input: unknown) =>
+      host.harness.behavior.callRpc(
+        name as never,
+        input as never,
+      ) as Promise<any>;
+    const added = await call("addCustomModel", {
+      providerId: "acp-cursor",
+      model: "grok-4.7",
+      displayName: "Grok 4.7",
+    });
+    expect(added.models).toEqual([
+      { providerId: "acp-cursor", model: "grok-4.7", displayName: "Grok 4.7" },
+    ]);
+    expect(
+      JSON.parse(await readFile(join(dataDir, "config.json"), "utf8")),
+    ).toEqual({ customModels: added.models });
+    expect((await call("listCustomModels", null)).models).toHaveLength(1);
+    await expect(
+      call("addCustomModel", { providerId: "acp-cursor", model: "native" }),
+    ).rejects.toThrow(/already lists/);
+    await expect(
+      call("addCustomModel", {
+        providerId: "acp-cursor",
+        model: "hidden-native",
+      }),
+    ).rejects.toThrow(/already lists/);
+    await call("removeCustomModel", {
+      providerId: "acp-cursor",
+      model: "grok-4.7",
+    });
+    expect((await call("listCustomModels", null)).models).toEqual([]);
+    expect(reloadConfig).toHaveBeenCalledTimes(2);
+    expect(host.harness.realtimeSignals).toHaveLength(2);
+  });
+
+  it("drives the CLI and refuses a config it cannot parse", async () => {
+    const { host, dataDir } = await withDataDir();
+    const cli = (...argv: string[]) => host.harness.behavior.runCli(argv);
+    expect((await cli("models", "list")).stdout).toBe("No custom models");
+    const add = await cli("models", "add", "p", "m1", "My", "Model", "--json");
+    expect(JSON.parse(add.stdout as string).models).toEqual([
+      { providerId: "p", model: "m1", displayName: "My Model" },
+    ]);
+    expect((await cli("models", "list")).stdout).toBe("p/m1 (My Model)");
+    expect((await cli("models", "remove", "p", "m1")).exitCode).toBe(0);
+    expect((await cli("models", "add", "p")).exitCode).toBe(1);
+    await writeFile(join(dataDir, "config.json"), "oops");
+    const bad = await cli("models", "add", "p", "m2");
+    expect(bad.exitCode).toBe(1);
+    expect(bad.stderr).toMatch(/not valid JSON/);
+    expect(await readFile(join(dataDir, "config.json"), "utf8")).toBe("oops");
   });
 });

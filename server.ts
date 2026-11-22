@@ -2,7 +2,16 @@ import {
   experimental_PluginRpcRefusal,
   type BbPluginApi,
 } from "@get-bb/plugin-sdk";
-import { PROFILES_CHANGED, rpcContract } from "./contract";
+import {
+  CUSTOM_MODELS_CHANGED,
+  PROFILES_CHANGED,
+  rpcContract,
+} from "./contract";
+import {
+  CustomModelError,
+  createCustomModels,
+  type CustomModelsResult,
+} from "./custom-models";
 import {
   createProfile,
   deleteProfile,
@@ -67,6 +76,35 @@ export default function plugin(bb: BbPluginApi) {
     return result;
   }
 
+  const customModels = createCustomModels({
+    dataDir: () => bb.server.experimental_dataDir,
+    hasNativeModel: async (providerId, model) => {
+      const options = await bb.sdk.system.executionOptions({ providerId });
+      return [...options.models, ...options.selectedOnlyModels].some(
+        (m) => m.model === model,
+      );
+    },
+    reload: () => bb.sdk.system.reloadConfig(),
+  });
+
+  async function changeCustomModels(
+    change: () => Promise<CustomModelsResult>,
+  ): Promise<CustomModelsResult> {
+    let result: CustomModelsResult;
+    try {
+      result = await change();
+    } catch (error) {
+      if (error instanceof CustomModelError)
+        throw new experimental_PluginRpcRefusal({
+          code: "invalid",
+          message: error.message,
+        });
+      throw error;
+    }
+    bb.realtime.publish(CUSTOM_MODELS_CHANGED, {});
+    return result;
+  }
+
   bb.rpc.register(rpcContract, {
     getSnapshot: () => store.read(),
     setHiddenModels: ({ mode }) => commit((s) => setHiddenModels(s, mode)),
@@ -86,9 +124,26 @@ export default function plugin(bb: BbPluginApi) {
     setDefaultModel: ({ profileId, defaultModel }) =>
       commit((s) => setDefaultModel(s, profileId, defaultModel)),
     reset: () => commit(() => INITIAL_SNAPSHOT),
+    listCustomModels: async () => {
+      try {
+        return { models: await customModels.list() };
+      } catch (error) {
+        if (error instanceof CustomModelError)
+          throw new experimental_PluginRpcRefusal({
+            code: "invalid",
+            message: error.message,
+          });
+        throw error;
+      }
+    },
+    addCustomModel: (input) =>
+      changeCustomModels(() => customModels.add(input)),
+    removeCustomModel: (input) =>
+      changeCustomModels(() => customModels.remove(input)),
   });
 
-  const usage = "Usage: bb profiles status [--json] | reset [--json]";
+  const usage =
+    "Usage: bb profiles status [--json] | reset [--json] | models list [--json] | models add <provider> <model> [display name...] [--json] | models remove <provider> <model> [--json]";
   bb.cli.register({
     name: "profiles",
     summary: "Inspect and reset per-project model profiles",
@@ -103,6 +158,12 @@ export default function plugin(bb: BbPluginApi) {
         summary: "Remove every profile and rule",
         usage: "bb profiles reset [--json]",
       },
+      {
+        name: "models",
+        summary: "List, add or remove custom model IDs",
+        usage:
+          "bb profiles models list [--json] | add <provider> <model> [display name...] | remove <provider> <model>",
+      },
     ],
     async run(argv) {
       const json = argv.includes("--json");
@@ -110,6 +171,38 @@ export default function plugin(bb: BbPluginApi) {
       if (command === undefined || command === "help" || command === "--help")
         return { exitCode: 0, stdout: usage };
       try {
+        if (command === "models") {
+          const [action, providerId, model, ...name] = args;
+          let result: CustomModelsResult;
+          if (action === "list" && !providerId)
+            result = { models: await customModels.list() };
+          else if (action === "add" && providerId && model)
+            result = await changeCustomModels(() =>
+              customModels.add({
+                providerId,
+                model,
+                displayName: name.join(" ").trim() || undefined,
+              }),
+            );
+          else if (action === "remove" && providerId && model && !name.length)
+            result = await changeCustomModels(() =>
+              customModels.remove({ providerId, model }),
+            );
+          else return { exitCode: 1, stderr: usage };
+          const lines = result.models.map(
+            (m) =>
+              `${m.providerId}/${m.model}${m.displayName ? ` (${m.displayName})` : ""}`,
+          );
+          return {
+            exitCode: 0,
+            stdout: json
+              ? JSON.stringify(result)
+              : [
+                  ...(lines.length ? lines : ["No custom models"]),
+                  ...(result.warning ? [result.warning] : []),
+                ].join("\n"),
+          };
+        }
         let snapshot: Snapshot;
         if (command === "status" && args.length === 0) snapshot = store.read();
         else if (command === "reset" && args.length === 0)
