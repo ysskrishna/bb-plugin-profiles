@@ -1,332 +1,231 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { createFakePluginHost } from "@get-bb/plugin-sdk/testing";
-import type { BbPluginApi } from "@get-bb/plugin-sdk";
 import plugin from "./server";
-import type { Snapshot } from "./preferences";
 
-type CatalogResult = Awaited<
-  ReturnType<BbPluginApi["sdk"]["system"]["executionOptions"]>
->;
-const catalog = (
-  ids = ["vendor/x", "acp:y"],
-  more = ["old/z"],
-): CatalogResult =>
-  ({
-    providers: [
-      { id: "alpha", available: true },
-      { id: "beta", available: true },
-    ],
-    models: ids.map((model) => ({ model })),
-    selectedOnlyModels: more.map((model) => ({ model })),
-    modelLoadError: null,
-  }) as unknown as CatalogResult;
-const activeHosts: ReturnType<typeof createFakePluginHost>[] = [];
-async function setup(load = async (_args?: unknown) => catalog()) {
-  const host = createFakePluginHost({
-    pluginId: "model-filter",
-    sdk: { system: { executionOptions: load } },
-  });
-  activeHosts.push(host);
+const hosts: ReturnType<typeof createFakePluginHost>[] = [];
+async function setup() {
+  const host = createFakePluginHost({ pluginId: "profiles" });
+  hosts.push(host);
   await plugin(host.bb);
   return host;
 }
 afterEach(async () => {
-  for (const host of activeHosts.splice(0))
-    await host.harness.lifecycle.dispose();
+  for (const host of hosts.splice(0)) await host.harness.lifecycle.dispose();
 });
-const selected = (...modelIds: string[]) => ({ mode: "selected", modelIds });
-const save = (
-  revision: number,
-  providerId: string,
-  rule = selected("vendor/x"),
-  routing?: object,
-) => ({
-  expectedRevision: revision,
-  providerId,
-  rule,
-  ...(routing ? { routing } : {}),
-});
+const rule = { enabled: true, limit: true, modelIds: ["a", "b"] };
 
-describe("server preferences", () => {
-  it("validates retained preferences in the CLI project's catalog when showing all models", async () => {
-    const requests: unknown[] = [];
-    const { harness } = await setup(async (args) => {
-      requests.push(args);
-      return catalog();
-    });
-    await harness.behavior.callRpc("saveProvider", {
-      expectedRevision: 0,
-      providerId: "alpha",
-      rule: { mode: "all", modelIds: [], favoriteIds: ["vendor/x"] },
-    });
-    expect(
-      (await harness.behavior.runCli(["all", "alpha"], { projectId: "proj_1" }))
-        .exitCode,
-    ).toBe(0);
-    expect(requests.at(-1)).toEqual({
-      providerId: "alpha",
-      projectId: "proj_1",
-    });
-  });
-
-  it("starts empty, validates raw routed IDs, and broadcasts only committed revisions", async () => {
+describe("profiles RPC", () => {
+  it("starts with Default only and publishes each committed change", async () => {
     const { harness } = await setup();
-    expect(await harness.behavior.callRpc("getPreferences", null)).toEqual({
-      revision: 0,
-      providers: {},
-    });
-    const snapshot = await harness.behavior.callRpc(
-      "saveProvider",
-      save(0, "alpha", selected("acp:y", "acp:y"), {
-        hostId: "host_1",
-        projectId: "proj_1",
-      }),
-    );
-    expect(snapshot).toEqual({
-      revision: 1,
-      providers: { alpha: selected("acp:y") },
-    });
-    expect(
-      harness.inspection.sdk.callsTo("system.executionOptions")[0],
-    ).toEqual([{ providerId: "alpha", hostId: "host_1", projectId: "proj_1" }]);
-    expect(harness.realtimeSignals).toEqual([
-      { channel: "preferences-changed", payload: { revision: 1 } },
-    ]);
-  });
-  it("refuses invalid input and new arbitrary IDs without touching state", async () => {
-    const { harness } = await setup();
-    for (const input of [
-      save(0, "alpha", selected()),
-      save(0, "alpha", selected("invented")),
-      save(0, "", selected("vendor/x")),
-      save(-1, "alpha"),
-      save(0, "alpha", selected("vendor/x"), {
-        hostId: "h",
-        environmentId: "e",
-      }),
-    ])
-      await expect(
-        harness.behavior.callRpc("saveProvider", input),
-      ).rejects.toThrow();
-    expect(await harness.behavior.callRpc("getPreferences", null)).toEqual({
-      revision: 0,
-      providers: {},
-    });
-    expect(harness.realtimeSignals).toEqual([]);
-  });
-  it("refuses unknown or unavailable providers even when a default catalog is returned", async () => {
-    const { harness } = await setup();
-    await expect(
-      harness.behavior.callRpc("saveProvider", save(0, "missing")),
-    ).rejects.toThrow(/provider/i);
-    harness.inspection.sdk.stub("system.executionOptions", async () => ({
-      ...catalog(),
-      providers: [{ id: "alpha", available: false }],
-    }));
-    await expect(
-      harness.behavior.callRpc("saveProvider", save(0, "alpha")),
-    ).rejects.toThrow(/provider/i);
-  });
-  it("rejects model-load failures while allowing All and reset without a catalog", async () => {
-    const { harness } = await setup(async () => ({
-      ...catalog(),
-      modelLoadError: {
-        code: "failed",
-        detail: "No catalog",
-        providerId: "alpha",
-      },
-    }));
-    await expect(
-      harness.behavior.callRpc("saveProvider", save(0, "alpha")),
-    ).rejects.toThrow(/catalog/i);
-    expect(
-      await harness.behavior.callRpc(
-        "saveProvider",
-        save(0, "alpha", { mode: "all", modelIds: [] }),
-      ),
-    ).toEqual({
-      revision: 1,
-      providers: { alpha: { mode: "all", modelIds: [] } },
-    });
-    expect(
-      await harness.behavior.callRpc("resetPreferences", {
-        expectedRevision: 1,
-      }),
-    ).toEqual({ revision: 2, providers: {} });
-    expect(
-      harness.inspection.sdk.callsTo("system.executionOptions"),
-    ).toHaveLength(1);
-  });
-  it("accepts native More model IDs and retained unavailable IDs with a usable selection", async () => {
-    const { harness } = await setup();
-    await harness.behavior.callRpc(
-      "saveProvider",
-      save(0, "alpha", selected("old/z", "vendor/x")),
-    );
-    harness.inspection.sdk.stub("system.executionOptions", async () =>
-      catalog(["vendor/x"], []),
-    );
-    expect(
-      await harness.behavior.callRpc(
-        "saveProvider",
-        save(1, "alpha", selected("old/z", "vendor/x")),
-      ),
-    ).toEqual({
-      revision: 2,
-      providers: { alpha: selected("old/z", "vendor/x") },
-    });
-    await expect(
-      harness.behavior.callRpc(
-        "saveProvider",
-        save(2, "alpha", selected("old/z")),
-      ),
-    ).rejects.toThrow(/available|usable/i);
-    await expect(
-      harness.behavior.callRpc(
-        "saveProvider",
-        save(2, "alpha", selected("vendor/x", "never-saved")),
-      ),
-    ).rejects.toThrow(/unknown|catalog/i);
-  });
-  it("makes compare-and-swap atomic across two catalog requests", async () => {
-    let release!: () => void;
-    const barrier = new Promise<void>((resolve) => {
-      release = resolve;
-    });
-    const { harness } = await setup(async () => {
-      await barrier;
-      return catalog();
-    });
-    const first = harness.behavior.callRpc("saveProvider", save(0, "alpha"));
-    const second = harness.behavior.callRpc("saveProvider", save(0, "beta"));
-    release();
-    const results = await Promise.allSettled([first, second]);
-    expect(
-      results.filter((result) => result.status === "fulfilled"),
-    ).toHaveLength(1);
-    const rejection = results.find(
-      (result) => result.status === "rejected",
-    ) as PromiseRejectedResult;
-    expect(rejection.reason).toMatchObject({ code: "conflict" });
-    expect(
-      ((await harness.behavior.callRpc("getPreferences", null)) as Snapshot)
-        .revision,
-    ).toBe(1);
+    const empty = (await harness.behavior.callRpc("getSnapshot", null)) as {
+      revision: number;
+      profiles: { id: string }[];
+    };
+    expect(empty).toMatchObject({ revision: 0, profiles: [{ id: "default" }] });
+    const next = (await harness.behavior.callRpc("setHiddenModels", {
+      mode: "remove",
+    })) as { revision: number; hiddenModels: string };
+    expect(next).toMatchObject({ revision: 1, hiddenModels: "remove" });
     expect(harness.realtimeSignals).toHaveLength(1);
   });
-  it("preserves other providers and refuses stale resets", async () => {
+  it("creates, edits, assigns and deletes profiles", async () => {
     const { harness } = await setup();
-    await harness.behavior.callRpc("saveProvider", save(0, "alpha"));
-    await harness.behavior.callRpc(
-      "saveProvider",
-      save(1, "beta", selected("acp:y")),
-    );
+    const call = (name: string, input: unknown) =>
+      harness.behavior.callRpc(name as never, input as never) as Promise<any>;
+    await call("setProvider", {
+      profileId: "default",
+      providerId: "alpha",
+      rule,
+    });
+    await call("setDefaultModel", {
+      profileId: "default",
+      defaultModel: { providerId: "alpha", model: "a", reasoningLevel: "high" },
+    });
+    const created = await call("createProfile", {
+      name: "Work",
+      copyFromId: "default",
+    });
+    expect(created.snapshot.profiles[1]).toMatchObject({
+      id: created.id,
+      name: "Work",
+      projectIds: [],
+      providers: { alpha: rule },
+      defaultModel: { providerId: "alpha", model: "a", reasoningLevel: "high" },
+    });
+    await call("renameProfile", { id: created.id, name: "Client" });
+    const assigned = await call("setProfileProjects", {
+      id: created.id,
+      projectIds: ["p1"],
+    });
+    expect(assigned.profiles[1]).toMatchObject({
+      name: "Client",
+      projectIds: ["p1"],
+    });
     await expect(
-      harness.behavior.callRpc("resetPreferences", {
-        expectedRevision: 1,
-        providerId: "alpha",
-      }),
-    ).rejects.toMatchObject({ code: "conflict" });
-    expect(
-      await harness.behavior.callRpc("resetPreferences", {
-        expectedRevision: 2,
-        providerId: "alpha",
-      }),
-    ).toEqual({ revision: 3, providers: { beta: selected("acp:y") } });
+      call("createProfile", { name: "client", copyFromId: "default" }),
+    ).rejects.toThrow(/exists/);
+    await expect(call("deleteProfile", { id: "default" })).rejects.toThrow(
+      /deleted/,
+    );
+    const removed = await call("deleteProfile", { id: created.id });
+    expect(removed.profiles).toHaveLength(1);
+    const reset = await call("reset", null);
+    expect(reset.profiles[0].providers).toEqual({});
+    expect(reset.revision).toBeGreaterThan(removed.revision);
   });
-  it("persists the snapshot through plugin reload on its real SQLite database", async () => {
+  it("refuses a limit with no models and strict extra fields", async () => {
     const { harness } = await setup();
-    await harness.behavior.callRpc("saveProvider", save(0, "alpha"));
+    const call = (name: string, input: unknown) =>
+      harness.behavior.callRpc(name as never, input as never);
+    await expect(
+      call("setProvider", {
+        profileId: "default",
+        providerId: "alpha",
+        rule: { enabled: true, limit: true, modelIds: [] },
+      }),
+    ).rejects.toThrow();
+    await expect(
+      call("setProvider", {
+        profileId: "default",
+        providerId: "alpha",
+        rule: { ...rule, extra: 1 },
+      }),
+    ).rejects.toThrow();
+    expect(harness.realtimeSignals).toEqual([]);
+  });
+  it("persists through a plugin reload", async () => {
+    const { harness } = await setup();
+    await harness.behavior.callRpc(
+      "setProvider" as never,
+      {
+        profileId: "default",
+        providerId: "alpha",
+        rule,
+      } as never,
+    );
     const reloaded = await harness.lifecycle.reload(plugin);
-    activeHosts.push(reloaded);
-    expect(
-      await reloaded.harness.behavior.callRpc("getPreferences", null),
-    ).toEqual({ revision: 1, providers: { alpha: selected("vendor/x") } });
+    hosts.push(reloaded);
+    const snapshot = (await reloaded.harness.behavior.callRpc(
+      "getSnapshot" as never,
+      null as never,
+    )) as { revision: number; profiles: { providers: object }[] };
+    expect(snapshot.revision).toBe(1);
+    expect(snapshot.profiles[0].providers).toEqual({ alpha: rule });
+  });
+});
+
+describe("stored documents", () => {
+  const insert = (
+    db: ReturnType<
+      typeof createFakePluginHost
+    >["bb"]["storage"]["database"] extends () => infer D
+      ? D
+      : never,
+    document: string,
+  ) =>
+    db
+      .prepare(
+        "INSERT INTO model_filter_preferences (singleton, document) VALUES (1, ?)",
+      )
+      .run(document);
+  it("upgrades a version 1 document in place on the next change", async () => {
+    const { bb, harness } = await setup();
+    const db = bb.storage.database();
+    insert(
+      db,
+      JSON.stringify({
+        version: 1,
+        snapshot: {
+          revision: 4,
+          providers: {
+            alpha: {
+              mode: "selected",
+              modelIds: ["a"],
+              preferredModelId: "a",
+              favoriteIds: ["a"],
+            },
+          },
+        },
+      }),
+    );
+    const read = (await harness.behavior.callRpc(
+      "getSnapshot" as never,
+      null as never,
+    )) as {
+      revision: number;
+      profiles: { defaultModel?: unknown; providers: object }[];
+    };
+    expect(read.revision).toBe(4);
+    expect(read.profiles[0]).toMatchObject({
+      providers: { alpha: { enabled: true, limit: true, modelIds: ["a"] } },
+      defaultModel: { providerId: "alpha", model: "a" },
+    });
+    await harness.behavior.callRpc(
+      "setHiddenModels" as never,
+      { mode: "remove" } as never,
+    );
+    const stored = db
+      .prepare(
+        "SELECT document FROM model_filter_preferences WHERE singleton=1",
+      )
+      .get() as { document: string };
+    expect(JSON.parse(stored.document)).toMatchObject({
+      version: 2,
+      snapshot: { revision: 5, hiddenModels: "remove" },
+    });
   });
   it.each([
     "not-json",
-    JSON.stringify({ version: 999, snapshot: { revision: 0, providers: {} } }),
-    JSON.stringify({ version: 1, snapshot: { revision: -1, providers: {} } }),
-  ])(
-    "refuses malformed or unknown-version state without erasing it: %s",
-    async (document) => {
-      const { bb, harness } = await setup();
-      const db = bb.storage.database();
-      db.prepare(
-        "INSERT INTO model_filter_preferences (singleton, document) VALUES (1, ?)",
-      ).run(document);
-      await expect(
-        harness.behavior.callRpc("getPreferences", null),
-      ).rejects.toThrow(/stored|version/i);
-      await expect(
-        harness.behavior.callRpc("resetPreferences", { expectedRevision: 0 }),
-      ).rejects.toThrow();
-      expect(
-        db
-          .prepare(
-            "SELECT document FROM model_filter_preferences WHERE singleton=1",
-          )
-          .get(),
-      ).toEqual({ document });
-      expect(harness.realtimeSignals).toEqual([]);
-    },
-  );
+    JSON.stringify({ version: 999, snapshot: {} }),
+    JSON.stringify({ version: 2, snapshot: { revision: 0 } }),
+  ])("refuses malformed state without erasing it: %s", async (document) => {
+    const { bb, harness } = await setup();
+    const db = bb.storage.database();
+    insert(db, document);
+    await expect(
+      harness.behavior.callRpc("getSnapshot" as never, null as never),
+    ).rejects.toThrow(/stored/i);
+    await expect(
+      harness.behavior.callRpc("reset" as never, null as never),
+    ).rejects.toThrow();
+    expect(
+      db
+        .prepare(
+          "SELECT document FROM model_filter_preferences WHERE singleton=1",
+        )
+        .get(),
+    ).toEqual({ document });
+    expect(harness.realtimeSignals).toEqual([]);
+  });
 });
 
 describe("CLI", () => {
-  it("remembers selected IDs across All so a later selection restores unavailable choices", async () => {
+  it("shows status and resets", async () => {
     const { harness } = await setup();
-    await harness.behavior.runCli(["select", "alpha", "vendor/x", "old/z"]);
-    await harness.behavior.runCli(["all", "alpha"]);
-    expect(await harness.behavior.callRpc("getPreferences", null)).toEqual({
-      revision: 2,
-      providers: { alpha: { mode: "all", modelIds: ["vendor/x", "old/z"] } },
-    });
-    harness.inspection.sdk.stub("system.executionOptions", async () =>
-      catalog(["vendor/x"], []),
+    await harness.behavior.callRpc(
+      "setProvider" as never,
+      {
+        profileId: "default",
+        providerId: "alpha",
+        rule,
+      } as never,
     );
-    expect(
-      await harness.behavior.callRpc(
-        "saveProvider",
-        save(2, "alpha", selected("vendor/x", "old/z")),
-      ),
-    ).toEqual({
-      revision: 3,
-      providers: { alpha: selected("vendor/x", "old/z") },
-    });
-  });
-  it("uses the same persisted snapshots for status, select, all and reset", async () => {
-    const { harness } = await setup();
-    expect(
-      JSON.parse((await harness.behavior.runCli(["status", "--json"])).stdout),
-    ).toEqual({ revision: 0, providers: {} });
-    expect(
-      (
-        await harness.behavior.runCli([
-          "select",
-          "alpha",
-          "vendor/x",
-          "acp:y",
-          "--json",
-        ])
-      ).exitCode,
-    ).toBe(0);
-    expect(await harness.behavior.callRpc("getPreferences", null)).toEqual({
-      revision: 1,
-      providers: { alpha: selected("vendor/x", "acp:y") },
-    });
-    expect((await harness.behavior.runCli(["all", "alpha"])).exitCode).toBe(0);
-    expect((await harness.behavior.runCli(["reset", "alpha"])).exitCode).toBe(
+    const text = await harness.behavior.runCli(["status"]);
+    expect(text.exitCode).toBe(0);
+    expect(text.stdout).toContain("alpha: on, limited to 2 models");
+    const json = await harness.behavior.runCli(["status", "--json"]);
+    expect(JSON.parse(json.stdout as string).revision).toBe(1);
+    expect((await harness.behavior.runCli(["reset", "--json"])).exitCode).toBe(
       0,
     );
     expect(
-      JSON.parse((await harness.behavior.runCli(["status", "--json"])).stdout),
-    ).toEqual({ revision: 3, providers: {} });
-    expect(
-      (await harness.behavior.runCli(["select", "alpha", "made-up"])).exitCode,
-    ).toBe(1);
-    expect((await harness.behavior.runCli(["reset", "a", "b"])).exitCode).toBe(
+      JSON.parse(
+        (await harness.behavior.runCli(["status", "--json"])).stdout as string,
+      ).profiles[0].providers,
+    ).toEqual({});
+    expect((await harness.behavior.runCli(["prefer", "a", "b"])).exitCode).toBe(
       1,
     );
+    expect((await harness.behavior.runCli(["reset", "x"])).exitCode).toBe(1);
   });
 });
