@@ -4,6 +4,7 @@ import {
   type QueryOptions,
   type QueryClientAdapter,
 } from "./query-bridge";
+import { bridgeState, limit, off, profile, snapshotOf } from "./test-utils";
 
 const catalog = {
   providers: [{ id: "custom" }],
@@ -42,10 +43,9 @@ function host(
   const query = { queryKey: key, observers: [observer] };
   return { client, observer, query, listeners };
 }
-const selected = {
-  revision: 1,
-  providers: { custom: { mode: "selected" as const, modelIds: ["b"] } },
-};
+const selected = bridgeState(
+  snapshotOf({ custom: limit("b") }, { hiddenModels: "remove" }),
+);
 
 describe("native observer data bridge", () => {
   it("projects existing observers without mutating raw model availability", () => {
@@ -66,10 +66,11 @@ describe("native observer data bridge", () => {
     const bridge = attachQueryBridge(client, selected);
     const previousSelect = observer.options.select;
     const previousPlaceholder = observer.options.placeholderData;
-    bridge.update({
-      revision: 2,
-      providers: { custom: { mode: "selected", modelIds: ["c"] } },
-    });
+    bridge.update(
+      bridgeState(
+        snapshotOf({ custom: limit("c") }, { hiddenModels: "remove" }),
+      ),
+    );
     expect(observer.options.select).not.toBe(previousSelect);
     expect(observer.options.placeholderData).not.toBe(previousPlaceholder);
     const placeholder = (observer.options.placeholderData as () => unknown)();
@@ -136,6 +137,69 @@ describe("native observer data bridge", () => {
       queryKey: [...key.slice(0, 3), "__proto__", null],
     });
     expect(options.select!(data)).toBe(data);
+    bridge.dispose();
+  });
+  it("moves unselected models to More models in the default hidden mode", () => {
+    const { client } = host();
+    const bridge = attachQueryBridge(
+      client,
+      bridgeState(snapshotOf({ custom: limit("b") })),
+    );
+    const data = client.defaultQueryOptions({ queryKey: key }).select!(
+      catalog,
+    ) as typeof catalog;
+    expect(data.models.map((m) => m.model)).toEqual(["b"]);
+    expect(
+      [...data.selectedOnlyModels].map((m: { model: string }) => m.model),
+    ).toEqual(["a", "c"]);
+    bridge.dispose();
+  });
+  it("resolves the project from the environment map, then the composer project", () => {
+    const { client } = host();
+    const snapshot = snapshotOf(
+      {},
+      {
+        others: [
+          profile("only-b", { custom: limit("b") }, { projectIds: ["p1"] }),
+          profile("only-c", { custom: limit("c") }, { projectIds: ["p2"] }),
+        ],
+      },
+    );
+    const bridge = attachQueryBridge(
+      client,
+      bridgeState(snapshot, {
+        environmentProjects: { env1: "p1" },
+        composerProjectId: "p2",
+      }),
+    );
+    const models = (k: unknown[]) =>
+      (
+        client.defaultQueryOptions({ queryKey: k }).select!(
+          catalog,
+        ) as typeof catalog
+      ).models.map((m) => m.model);
+    expect(
+      models(["systemExecutionOptions", "env1", "host", "custom", null]),
+    ).toEqual(["b"]);
+    expect(models(key)).toEqual(["c"]);
+    bridge.update(bridgeState(snapshot, { composerProjectId: null }));
+    expect(models(key)).toEqual(["a", "b", "c"]);
+    bridge.dispose();
+  });
+  it("reports an unknown environment once per lookup and uses Default meanwhile", async () => {
+    const { client } = host();
+    const seen: string[] = [];
+    const bridge = attachQueryBridge(
+      client,
+      bridgeState(snapshotOf({ custom: limit("a") })),
+      (id) => seen.push(id),
+    );
+    const options = client.defaultQueryOptions({
+      queryKey: ["systemExecutionOptions", "env9", "host", "custom", null],
+    });
+    expect((options.select!(catalog) as typeof catalog).models).toHaveLength(1);
+    await Promise.resolve();
+    expect(seen).toEqual(["env9"]);
     bridge.dispose();
   });
 });
